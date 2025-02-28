@@ -1,0 +1,1 @@
+CREATE TABLE instance (id TEXT PRIMARY KEY, model TEXT UNIQUE NOT NULL, last_request INT NOT NULL, data BLOB NOT NULL);
