@@ -30,10 +30,10 @@ const GIB_IN_BYTE: u64 = 1024_u64.pow(3);
 fn calculate_gpu_match(gpu: &RunpodGpu, needed: u64) -> Option<(String, u8, f64)> {
     let gpu_size = gpu.memory * GIB_IN_BYTE;
     let gpus_needed = (needed / gpu_size) + 1;
-    if gpus_needed > 8 {
-        None
-    } else {
+    if gpus_needed == 1 || gpus_needed == 2 || gpus_needed == 4 || gpus_needed == 8 {
         Some((gpu.id.clone(), gpus_needed as u8, gpu.price * gpus_needed as f64))
+    } else {
+        None
     }
 }
 
