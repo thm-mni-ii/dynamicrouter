@@ -23,7 +23,7 @@ pub async fn init_db() {
 }
 
 pub fn get_executor() -> &'static Pool<Sqlite> {
-    DB.get().expect("you tried to access the db before it was initialized").get_executor()
+    DB.get().expect("you tried to access the dbo before it was initialized").get_executor()
 }
 
 pub struct Db {

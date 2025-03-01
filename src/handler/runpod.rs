@@ -1,10 +1,14 @@
+use crate::config::{RunpodGpu, CONFIG};
 use crate::handler::factories::ModelFactory;
+use crate::handler::huggingface::{calculate_needed_space, get_total_parameter_count};
 use crate::handler::models::{DynModel, HttpModel};
+use crate::handler::utils::{ModelRef, QuantType};
 use once_cell::sync::Lazy;
 use reqwest::{Client, Url};
 use serde_json::{json, Value};
-use std::error::Error;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::Debug;
+use log::{debug, info};
+use thiserror::Error;
 
 pub struct RunpodModelFactory {
     client: Client,
@@ -12,8 +16,8 @@ pub struct RunpodModelFactory {
 }
 
 impl RunpodModelFactory {
-    pub fn new(token: String) -> RunpodModelFactory {
-        RunpodModelFactory{ client: Client::default(), token }
+    pub fn new() -> RunpodModelFactory {
+        RunpodModelFactory{ client: Client::default(), token: CONFIG.factory.runpod.token.clone() }
     }
 }
 
@@ -21,27 +25,56 @@ static RUNPOD_GRAPHQL: Lazy<Url> = Lazy::new(|| "https://api.runpod.io/graphql".
 const RUNPOD_CREATE_MUTATION: &str = "mutation Mutation($input: PodFindAndDeployOnDemandInput) {  podFindAndDeployOnDemand(input: $input) {    id    imageName    env    machineId    machine {      podHostId      __typename    }    __typename  }}";
 const RUNPOD_DESTROY_MUTATION: &str = "mutation terminatePod($input: PodTerminateInput!) {podTerminate(input: $input)}";
 
+const GIB_IN_BYTE: u64 = 1024_u64.pow(3);
+
+fn calculate_gpu_match(gpu: &RunpodGpu, needed: u64) -> Option<(String, u8, f64)> {
+    let gpu_size = gpu.memory * GIB_IN_BYTE;
+    let gpus_needed = (needed / gpu_size) + 1;
+    if gpus_needed > 8 {
+        None
+    } else {
+        Some((gpu.id.clone(), gpus_needed as u8, gpu.price * gpus_needed as f64))
+    }
+}
+
+fn calculate_needed_gpu(model: &ModelRef, needed_memory: u64) -> Result<(String, u8), anyhow::Error> {
+    let mut options = CONFIG.factory.runpod.gpus.iter().filter_map(|gpu| calculate_gpu_match(gpu, needed_memory) ).collect::<Vec<(String, u8, f64)>>();
+    options.sort_by(|a, b| a.2.total_cmp(&b.2));
+
+    debug!("Valid options for {model:?}: {options:?}");
+
+    Ok(options.first().map(|(model, count, _)| (model.clone(), *count)).ok_or(RunpodError::NoGpuConfig())?)
+}
+
 #[async_trait::async_trait]
 impl ModelFactory for RunpodModelFactory {
 
-    async fn create(&self, model: String) -> Result<DynModel, anyhow::Error> {
+    async fn create(&self, model: ModelRef) -> Result<DynModel, anyhow::Error> {
+        let parameters = get_total_parameter_count(&model.get_hf_id()).await?;
+        let needed_storage = calculate_needed_space(parameters, QuantType::FP16);
+        let needed_gpu_memory = calculate_needed_space(parameters, model.quant.unwrap_or(QuantType::FP16));
+
+        let (gpu_id, gpu_count) = calculate_needed_gpu(&model, needed_gpu_memory + 5 * GIB_IN_BYTE)?;
+        info!("Using {gpu_count} x {gpu_id} for {model}");
         let res: Value = self.client.post(RUNPOD_GRAPHQL.clone())
             .bearer_auth(&self.token)
             .json(&json!({"query": RUNPOD_CREATE_MUTATION, "operationName": "Mutation", "variables": {"input":{
                 "cloudType":"SECURE",
-                "containerDiskInGb":400,
+                "containerDiskInGb": needed_storage / GIB_IN_BYTE + 100,
                 "volumeInGb":0,
-                "gpuCount":1,
-                "gpuTypeId":"NVIDIA L40S",
-                "templateId":"5pxt3e1avi",
+                "volumeMountPath": "/data",
+                "gpuCount":gpu_count,
+                "gpuTypeId":gpu_id,
+                "templateId": CONFIG.factory.runpod.template_id,
+                "imageName": CONFIG.factory.runpod.image,
                 "ports":"80/http",
-                "dockerArgs": format!("--model-id {} --quantize fp8", model)
+                "dockerArgs": build_docker_args(&model)
             }}}))
             .send().await?.error_for_status()?.json().await?;
-        let id = res.get("data").and_then(|c| c.get("podFindAndDeployOnDemand").and_then(|c| c.get("id")).and_then(|id| id.as_str())).ok_or_else(|| NoIdError{content: res.clone()})?;
+        let id = res.get("data").and_then(|c| c.get("podFindAndDeployOnDemand").and_then(|c| c.get("id")).and_then(|id| id.as_str())).ok_or(RunpodError::NoId())?;
         Ok(HttpModel::new_dyn(
             id.to_string(),
-            model,
+            model.to_string(),
             format!("https://{id}-80.proxy.runpod.net/v1/chat/completions").parse()?,
              None,
         ))
@@ -65,22 +98,27 @@ impl ModelFactory for RunpodModelFactory {
     }
 }
 
-struct NoIdError {
-    content: Value,
-}
+fn build_docker_args(model: &ModelRef) -> String {
+    let mut args = Vec::new();
+    args.push(format!("--model-id {}", model.get_hf_id()));
 
-impl Debug for NoIdError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "failed to extract id from {:?}", self.content)
+    if let Some(rev) = &model.rev {
+        args.push(format!("--revision {rev}"));
     }
+
+    match &model.quant {
+        Some(QuantType::FP8) => args.push("--quantize fp8".to_string()),
+        Some(QuantType::FP4) => args.push("--quantize bitsandbytes-fp4".to_string()),
+        _ => {},
+    };
+
+    args.join(" ")
 }
 
-impl Display for NoIdError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "failed to extract id from {:?}", self.content)
-    }
-}
-
-impl Error for NoIdError {
-
+#[derive(Debug, Error)]
+pub enum RunpodError {
+    #[error("failed to extract id")]
+    NoId(),
+    #[error("no gpu configuration with enough memory found")]
+    NoGpuConfig(),
 }

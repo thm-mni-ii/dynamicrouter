@@ -7,14 +7,15 @@ use sqlx::query;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 use crate::config::CONFIG;
-use crate::db::sql::get_executor;
+use crate::db::get_executor;
 use crate::handler::models::DynModel;
 use crate::handler::runpod::RunpodModelFactory;
+use crate::handler::utils::ModelRef;
 
 static MF: OnceCell<PersistentModelFactory> = OnceCell::new();
 
 pub async fn init_factories() {
-    let rmf = RunpodModelFactory::new(CONFIG.runpod_token.clone());
+    let rmf = RunpodModelFactory::new();
     let mf = PersistentModelFactory::new(rmf);
     match MF.set(mf) {
         Ok(()) => {},
@@ -30,7 +31,7 @@ pub fn get_factory() -> &'static PersistentModelFactory {
 
 #[async_trait::async_trait]
 pub trait ModelFactory: Send + Sync {
-    async fn create(&self, model: String) -> Result<DynModel, anyhow::Error>;
+    async fn create(&self, model: ModelRef) -> Result<DynModel, anyhow::Error>;
     async fn destroy(&self, model: DynModel) -> Result<(), anyhow::Error>;
     async fn dump(&self, model: &DynModel) -> Result<Vec<u8>, anyhow::Error>;
     async fn restore(&self, dump: &[u8]) -> Result<DynModel, anyhow::Error>;
@@ -82,8 +83,8 @@ impl PersistentModelFactory {
 
 #[async_trait::async_trait]
 impl ModelFactory for PersistentModelFactory {
-    async fn create(&self, model: String) -> Result<DynModel, anyhow::Error> {
-        let model_ref = &model;
+    async fn create(&self, model: ModelRef) -> Result<DynModel, anyhow::Error> {
+        let model_ref = model.to_string();
         let found = query!("SELECT data FROM instance WHERE model = ?", model_ref).fetch_optional(get_executor()).await?;
         if let Some(obj) = found {
             let existing_model = self.parent.restore(&obj.data).await?;
@@ -93,12 +94,12 @@ impl ModelFactory for PersistentModelFactory {
 
             Ok(existing_model)
         } else {
-            let new_model = self.parent.create(model.clone()).await?;
+            let new_model = self.parent.create(model).await?;
             let model_id = new_model.id().await;
-            info!("Creating instance {} for {}", model_id, model);
+            info!("Created instance {} for {}", model_id, model_ref);
             let model_dump = self.parent.dump(&new_model).await?;
 
-            query!("INSERT INTO instance (id, model, data, last_request) VALUES (?, ?, ?, unixepoch())", model_id, model, model_dump).fetch_optional(get_executor()).await?;
+            query!("INSERT INTO instance (id, model, data, last_request) VALUES (?, ?, ?, unixepoch())", model_id, model_ref, model_dump).fetch_optional(get_executor()).await?;
             Ok(new_model)
         }
     }
