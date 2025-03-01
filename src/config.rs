@@ -27,6 +27,8 @@ pub struct RunpodConf {
     pub gpus: Vec<RunpodGpu>,
     pub template_id: String,
     pub image: String,
+    pub gpu_memory_margin: Option<u64>,
+    pub disk_storage_margin: Option<u64>
 }
 
 #[derive(Deserialize)]

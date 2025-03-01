@@ -54,13 +54,13 @@ impl ModelFactory for RunpodModelFactory {
         let needed_storage = calculate_needed_space(parameters, QuantType::FP16);
         let needed_gpu_memory = calculate_needed_space(parameters, model.quant.unwrap_or(QuantType::FP16));
 
-        let (gpu_id, gpu_count) = calculate_needed_gpu(&model, needed_gpu_memory + 5 * GIB_IN_BYTE)?;
+        let (gpu_id, gpu_count) = calculate_needed_gpu(&model, needed_gpu_memory + CONFIG.factory.runpod.gpu_memory_margin.unwrap_or(0) * GIB_IN_BYTE)?;
         info!("Using {gpu_count} x {gpu_id} for {model}");
         let res: Value = self.client.post(RUNPOD_GRAPHQL.clone())
             .bearer_auth(&self.token)
             .json(&json!({"query": RUNPOD_CREATE_MUTATION, "operationName": "Mutation", "variables": {"input":{
                 "cloudType":"SECURE",
-                "containerDiskInGb": needed_storage / GIB_IN_BYTE + 100,
+                "containerDiskInGb": needed_storage / GIB_IN_BYTE + CONFIG.factory.runpod.disk_storage_margin.unwrap_or(0),
                 "volumeInGb":0,
                 "volumeMountPath": "/data",
                 "gpuCount":gpu_count,
