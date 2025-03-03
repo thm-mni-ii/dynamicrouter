@@ -1,6 +1,6 @@
 use crate::config::{RunpodGpu, CONFIG};
 use crate::handler::factories::ModelFactory;
-use crate::handler::huggingface::{calculate_needed_space, get_total_parameter_count};
+use crate::handler::huggingface::{calculate_needed_space, get_model_information};
 use crate::handler::models::{DynModel, HttpModel};
 use crate::handler::utils::{ModelRef, QuantType};
 use once_cell::sync::Lazy;
@@ -50,16 +50,15 @@ fn calculate_needed_gpu(model: &ModelRef, needed_memory: u64) -> Result<(String,
 impl ModelFactory for RunpodModelFactory {
 
     async fn create(&self, model: ModelRef) -> Result<DynModel, anyhow::Error> {
-        let parameters = get_total_parameter_count(&model.get_hf_id()).await?;
-        let needed_storage = calculate_needed_space(parameters, QuantType::FP16);
-        let needed_gpu_memory = calculate_needed_space(parameters, model.quant.unwrap_or(QuantType::FP16));
+        let model_information = get_model_information(&model.get_hf_id()).await?;
+        let needed_gpu_memory = calculate_needed_space(model_information.parameter_count, model.quant.unwrap_or(QuantType::FP16));
 
         let (gpu_id, gpu_count) = calculate_needed_gpu(&model, needed_gpu_memory + CONFIG.factory.runpod.gpu_memory_margin.unwrap_or(0) * GIB_IN_BYTE)?;
         info!("Using {gpu_count} x {gpu_id} for {model}");
 
         let mut input = json!({
             "cloudType":"SECURE",
-            "containerDiskInGb": needed_storage / GIB_IN_BYTE + CONFIG.factory.runpod.disk_storage_margin.unwrap_or(0),
+            "containerDiskInGb": model_information.storage_size / GIB_IN_BYTE + CONFIG.factory.runpod.disk_storage_margin.unwrap_or(0),
             "volumeInGb":0,
             "volumeMountPath": "/data",
             "gpuCount":gpu_count,
