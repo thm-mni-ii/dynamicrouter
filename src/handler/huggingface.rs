@@ -4,6 +4,7 @@ use once_cell::sync::Lazy;
 use reqwest::Client;
 use serde_json::Value;
 use std::fmt::Debug;
+use secrecy::ExposeSecret;
 
 static CLIENT: Lazy<Client> = Lazy::new(Client::new);
 
@@ -16,7 +17,7 @@ pub struct HfModel {
 pub async fn get_model_information(id: &str) -> Result<HfModel, anyhow::Error> {
     let mut builder = CLIENT.get(format!("https://huggingface.co/api/models/{id}"));
     if let Some(token) = &CONFIG.hf.token {
-        builder = builder.bearer_auth(token);
+        builder = builder.bearer_auth(token.expose_secret());
     }
 
     let res: Value = builder.send().await?.error_for_status()?.json().await?;

@@ -8,16 +8,16 @@ use reqwest::{Client, Url};
 use serde_json::{json, Value};
 use std::fmt::Debug;
 use log::{debug, info};
+use secrecy::ExposeSecret;
 use thiserror::Error;
 
 pub struct RunpodModelFactory {
     client: Client,
-    token: String,
 }
 
 impl RunpodModelFactory {
     pub fn new() -> RunpodModelFactory {
-        RunpodModelFactory{ client: Client::default(), token: CONFIG.factory.runpod.token.clone() }
+        RunpodModelFactory{ client: Client::default() }
     }
 }
 
@@ -70,14 +70,14 @@ impl ModelFactory for RunpodModelFactory {
         });
         if let Some(token) = &CONFIG.hf.token  {
             debug!("Setting hf_token!");
-            input.as_object_mut().unwrap().insert("env".to_string(), json!([{"key": "HF_TOKEN", "value": token}]));
+            input.as_object_mut().unwrap().insert("env".to_string(), json!([{"key": "HF_TOKEN", "value": token.expose_secret()}]));
         }
 
         let body = json!({"query": RUNPOD_CREATE_MUTATION, "operationName": "Mutation", "variables": {"input": input}});
         debug!("Sending {body:?} to runpod");
 
         let res: Value = self.client.post(RUNPOD_GRAPHQL.clone())
-            .bearer_auth(&self.token)
+            .bearer_auth(CONFIG.factory.runpod.token.expose_secret())
             .json(&body)
             .send().await?.error_for_status()?.json().await?;
         let id = res.get("data").and_then(|c| c.get("podFindAndDeployOnDemand").and_then(|c| c.get("id")).and_then(|id| id.as_str())).ok_or(RunpodError::NoId())?;
@@ -92,7 +92,7 @@ impl ModelFactory for RunpodModelFactory {
     async fn destroy(&self, model: DynModel) -> Result<(), anyhow::Error> {
         let id = model.id().await;
         self.client.post(RUNPOD_GRAPHQL.clone())
-            .bearer_auth(&self.token)
+            .bearer_auth(CONFIG.factory.runpod.token.expose_secret())
             .json(&json!({"query": RUNPOD_DESTROY_MUTATION, "operationName": "terminatePod", "variables": {"input": {"podId": id}}}))
             .send().await?.error_for_status()?;
         Ok(())

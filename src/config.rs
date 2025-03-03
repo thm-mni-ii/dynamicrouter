@@ -3,6 +3,7 @@ use std::process::exit;
 use config::Config;
 use log::error;
 use once_cell::sync::Lazy;
+use secrecy::SecretBox;
 use serde::Deserialize;
 
 fn default_timeout() -> u32 {
@@ -28,7 +29,7 @@ pub struct Conf {
 
 #[derive(Deserialize, Debug)]
 pub struct HuggingfaceConf {
-    pub token: Option<String>
+    pub token: Option<SecretBox<String>>
 }
 
 #[derive(Deserialize, Debug)]
@@ -38,7 +39,7 @@ pub struct FactoryConf {
 
 #[derive(Deserialize, Debug)]
 pub struct RunpodConf {
-    pub token: String,
+    pub token: SecretBox<String>,
     pub gpus: Vec<RunpodGpu>,
     pub template_id: String,
     pub image: String,
