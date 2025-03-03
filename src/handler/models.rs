@@ -12,7 +12,9 @@ use serde_json::Value;
 use futures_util::StreamExt;
 use log::warn;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tokio::time::sleep;
+use crate::config::CONFIG;
 
 type ModelStream = Box<dyn futures_core::Stream<Item = Result<Bytes, anyhow::Error>> + Send + Unpin>;
 
@@ -138,20 +140,29 @@ impl Model for RetryingModel {
     }
 
     async fn generate(&self, request: &Value) -> Result<ModelResponse, anyhow::Error> {
-        loop {
+        let mut i = 0;
+        while i < CONFIG.model_timeout / CONFIG.model_retry_interval {
             match self.parent.generate(request).await {
                 Ok(res) => {
                     return Ok(res);
                 },
                 Err(err) => {
                     warn!("Retrying after error: {err}");
-                    sleep(Duration::from_secs(60)).await;
+                    sleep(Duration::from_secs(CONFIG.model_retry_interval.into())).await;
                 }
             };
+            i += 1;
         }
+        Err(ModelError::RetriesExceeded().into())
     }
 
     async fn serialize(&self) -> Result<Vec<u8>, anyhow::Error> {
         self.parent.serialize().await
     }
+}
+
+#[derive(Debug, Error)]
+enum ModelError {
+    #[error("model not responding after exceeding retries")]
+    RetriesExceeded(),
 }

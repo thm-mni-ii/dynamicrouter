@@ -12,7 +12,7 @@ mod db;
 
 use axum::Router;
 use axum::routing::{get, post};
-use log::{info, LevelFilter};
+use log::{debug, info, LevelFilter};
 use crate::config::CONFIG;
 use db::init_db;
 use crate::handler::factories::init_factories;
@@ -25,6 +25,8 @@ fn main() {
 async fn async_main() {
     env_logger::builder().filter_level(LevelFilter::Info).parse_default_env().init();
 
+    debug!("Starting with config {:?}", *CONFIG);
+    
     init_db().await;
     init_factories().await;
 

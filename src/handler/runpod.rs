@@ -56,20 +56,30 @@ impl ModelFactory for RunpodModelFactory {
 
         let (gpu_id, gpu_count) = calculate_needed_gpu(&model, needed_gpu_memory + CONFIG.factory.runpod.gpu_memory_margin.unwrap_or(0) * GIB_IN_BYTE)?;
         info!("Using {gpu_count} x {gpu_id} for {model}");
+
+        let mut input = json!({
+            "cloudType":"SECURE",
+            "containerDiskInGb": needed_storage / GIB_IN_BYTE + CONFIG.factory.runpod.disk_storage_margin.unwrap_or(0),
+            "volumeInGb":0,
+            "volumeMountPath": "/data",
+            "gpuCount":gpu_count,
+            "gpuTypeId":gpu_id,
+            "templateId": CONFIG.factory.runpod.template_id,
+            "imageName": CONFIG.factory.runpod.image,
+            "ports":"80/http",
+            "dockerArgs": build_docker_args(&model)
+        });
+        if let Some(token) = &CONFIG.hf.token  {
+            debug!("Setting hf_token!");
+            input.as_object_mut().unwrap().insert("env".to_string(), json!([{"key": "HF_TOKEN", "value": token}]));
+        }
+
+        let body = json!({"query": RUNPOD_CREATE_MUTATION, "operationName": "Mutation", "variables": {"input": input}});
+        debug!("Sending {body:?} to runpod");
+
         let res: Value = self.client.post(RUNPOD_GRAPHQL.clone())
             .bearer_auth(&self.token)
-            .json(&json!({"query": RUNPOD_CREATE_MUTATION, "operationName": "Mutation", "variables": {"input":{
-                "cloudType":"SECURE",
-                "containerDiskInGb": needed_storage / GIB_IN_BYTE + CONFIG.factory.runpod.disk_storage_margin.unwrap_or(0),
-                "volumeInGb":0,
-                "volumeMountPath": "/data",
-                "gpuCount":gpu_count,
-                "gpuTypeId":gpu_id,
-                "templateId": CONFIG.factory.runpod.template_id,
-                "imageName": CONFIG.factory.runpod.image,
-                "ports":"80/http",
-                "dockerArgs": build_docker_args(&model)
-            }}}))
+            .json(&body)
             .send().await?.error_for_status()?.json().await?;
         let id = res.get("data").and_then(|c| c.get("podFindAndDeployOnDemand").and_then(|c| c.get("id")).and_then(|id| id.as_str())).ok_or(RunpodError::NoId())?;
         Ok(HttpModel::new_dyn(
