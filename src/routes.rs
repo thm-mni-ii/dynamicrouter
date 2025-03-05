@@ -1,26 +1,43 @@
 use crate::config::CONFIG;
 use crate::handler::factories::{get_factory, ModelFactory};
 use crate::handler::models::{DynModel, ModelResponse, RetryingModel};
+use crate::handler::utils::ModelRef;
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::Json;
-use log::{debug, error};
+use log::{debug, error, warn};
 use serde_json::{json, Value};
 use sha2::Digest;
-use crate::handler::utils::ModelRef;
 
-pub async fn completions(headers: HeaderMap, body: Json<Value>) -> Result<ModelResponse, StatusCode> {
+pub async fn completions(
+    headers: HeaderMap,
+    body: Json<Value>,
+) -> Result<ModelResponse, StatusCode> {
     if !verify_authorization(&headers) {
-        return Err(StatusCode::UNAUTHORIZED)
+        return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let Some(model) = body.get("model").and_then(|v| v.as_str()).and_then(|m| m.parse::<ModelRef>().ok()) else { return Err(StatusCode::BAD_REQUEST) };
+    let Some(model) = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .and_then(|m| m.parse::<ModelRef>().ok())
+    else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
     debug!("Received request for model {model:?}");
+
+    if CONFIG.only_allow_advertised_models.unwrap_or(false) {
+        let model_name = model.to_string();
+        if !CONFIG.advertise_models.contains(&model_name) {
+            warn!("{model_name} is not in the list of allowed models");
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
 
     let model: DynModel = match get_factory().create(model).await {
         Ok(model) => RetryingModel::new_dyn(model),
         Err(err) => {
             error!("Error while creating model: {err:?}");
-            return Err(StatusCode::INTERNAL_SERVER_ERROR)
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
     match model.generate(&body.0).await {
@@ -34,7 +51,7 @@ pub async fn completions(headers: HeaderMap, body: Json<Value>) -> Result<ModelR
 
 pub async fn models(headers: HeaderMap) -> Result<Json<Value>, StatusCode> {
     if !verify_authorization(&headers) {
-        return Err(StatusCode::UNAUTHORIZED)
+        return Err(StatusCode::UNAUTHORIZED);
     }
 
     Ok(Json(json!({
@@ -43,7 +60,8 @@ pub async fn models(headers: HeaderMap) -> Result<Json<Value>, StatusCode> {
 }
 
 fn verify_authorization(headers: &HeaderMap) -> bool {
-    headers.get(header::AUTHORIZATION)
+    headers
+        .get(header::AUTHORIZATION)
         .and_then(|header| header.to_str().ok())
         .and_then(|header| header.strip_prefix("Bearer "))
         .is_some_and(|token| {

@@ -1,36 +1,36 @@
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
-use std::time::Duration;
+use crate::config::CONFIG;
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
-use reqwest::{Client, StatusCode, Url};
-use serde_json::Value;
 use futures_util::StreamExt;
 use log::warn;
+use reqwest::{Client, StatusCode, Url};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+use std::time::Duration;
 use thiserror::Error;
 use tokio::time::sleep;
-use crate::config::CONFIG;
 
-type ModelStream = Box<dyn futures_core::Stream<Item = Result<Bytes, anyhow::Error>> + Send + Unpin>;
+type ModelStream =
+    Box<dyn futures_core::Stream<Item = Result<Bytes, anyhow::Error>> + Send + Unpin>;
 
 pub struct ModelResponse {
     pub content_type: Option<String>,
     pub content_length: Option<u64>,
-    pub body: ModelStream
+    pub body: ModelStream,
 }
 
 impl IntoResponse for ModelResponse {
     fn into_response(self) -> Response {
-        let mut builder = Response::builder()
-            .status(StatusCode::OK);
+        let mut builder = Response::builder().status(StatusCode::OK);
         builder = match self.content_type {
             Some(ct) => builder.header(header::CONTENT_TYPE, ct),
-            None => builder
+            None => builder,
         };
         builder = match self.content_length {
             Some(cl) => builder.header(header::CONTENT_LENGTH, cl),
@@ -42,16 +42,20 @@ impl IntoResponse for ModelResponse {
 }
 
 struct StreamAdapter<P: futures_core::Stream<Item = Result<Bytes, reqwest::Error>> + Send + Unpin> {
-    parent: P
+    parent: P,
 }
 
-impl <P: futures_core::Stream<Item = Result<Bytes, reqwest::Error>> + Send + Unpin> StreamAdapter<P> {
+impl<P: futures_core::Stream<Item = Result<Bytes, reqwest::Error>> + Send + Unpin>
+    StreamAdapter<P>
+{
     pub fn new(parent: P) -> StreamAdapter<P> {
-        StreamAdapter {parent}
+        StreamAdapter { parent }
     }
 }
 
-impl <P: futures_core::Stream<Item = Result<Bytes, reqwest::Error>> + Send + Unpin> futures_core::Stream for StreamAdapter<P> {
+impl<P: futures_core::Stream<Item = Result<Bytes, reqwest::Error>> + Send + Unpin>
+    futures_core::Stream for StreamAdapter<P>
+{
     type Item = Result<Bytes, anyhow::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -81,7 +85,13 @@ pub struct HttpModel {
 
 impl HttpModel {
     pub fn new_dyn(id: String, name: String, url: Url, token: Option<String>) -> DynModel {
-        Arc::new(Self { id, name, url, token, client: Client::default() })
+        Arc::new(Self {
+            id,
+            name,
+            url,
+            token,
+            client: Client::default(),
+        })
     }
 
     pub fn deserialize(data: &[u8]) -> Result<DynModel, anyhow::Error> {
@@ -108,7 +118,10 @@ impl Model for HttpModel {
         let res = builder.send().await?.error_for_status()?;
 
         Ok(ModelResponse {
-            content_type: res.headers().get("Content-Type").map(|ct| ct.to_str().unwrap().to_string()),
+            content_type: res
+                .headers()
+                .get("Content-Type")
+                .map(|ct| ct.to_str().unwrap().to_string()),
             content_length: res.content_length(),
             body: Box::new(StreamAdapter::new(res.bytes_stream())),
         })
@@ -145,7 +158,7 @@ impl Model for RetryingModel {
             match self.parent.generate(request).await {
                 Ok(res) => {
                     return Ok(res);
-                },
+                }
                 Err(err) => {
                     warn!("Retrying after error: {err}");
                     sleep(Duration::from_secs(CONFIG.model_retry_interval.into())).await;

@@ -1,16 +1,16 @@
-use std::process::exit;
+use crate::config::CONFIG;
 use log::error;
 use once_cell::sync::OnceCell;
-use crate::config::CONFIG;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{Pool, Sqlite};
+use std::process::exit;
 
 pub static DB: OnceCell<Db> = OnceCell::new();
 
 pub async fn init_db() {
     match Db::connect().await {
         Ok(db) => match DB.set(db) {
-            Ok(()) => {},
+            Ok(()) => {}
             Err(_) => {
                 panic!("init_db should only be called once");
             }
@@ -23,11 +23,13 @@ pub async fn init_db() {
 }
 
 pub fn get_executor() -> &'static Pool<Sqlite> {
-    DB.get().expect("you tried to access the dbo before it was initialized").get_executor()
+    DB.get()
+        .expect("you tried to access the dbo before it was initialized")
+        .get_executor()
 }
 
 pub struct Db {
-    executor: Pool<Sqlite>
+    executor: Pool<Sqlite>,
 }
 
 impl Db {
@@ -35,7 +37,8 @@ impl Db {
         Ok(Db {
             executor: SqlitePoolOptions::new()
                 .max_connections(5)
-                .connect(&CONFIG.sqlite_url).await?
+                .connect(&CONFIG.sqlite_url)
+                .await?,
         })
     }
 
