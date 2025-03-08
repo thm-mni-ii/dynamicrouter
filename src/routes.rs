@@ -89,6 +89,6 @@ fn verify_authorization(headers: &HeaderMap) -> Option<(&String, &User)> {
             CONFIG
                 .users
                 .iter()
-                .find(|(_name, u)| u.tokens.contains(&encoded))
+                .find(|(_name, u)| u.token_hashes.contains(&encoded))
         })
 }
