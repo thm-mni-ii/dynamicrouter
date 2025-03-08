@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::config::{FactoryConf, CONFIG};
 use crate::db::get_executor;
 use crate::handler::kubernetes::KubernetesModelFactory;
@@ -10,6 +11,7 @@ use sqlx::query;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::process::exit;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
@@ -50,6 +52,7 @@ pub trait ModelFactory: Send + Sync {
 
 pub struct PersistentModelFactory {
     parent: Box<dyn ModelFactory>,
+    model_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     auto_clean_running: Mutex<bool>,
 }
 
@@ -78,8 +81,18 @@ impl PersistentModelFactory {
     pub fn new(parent: Box<dyn ModelFactory>) -> PersistentModelFactory {
         PersistentModelFactory {
             parent,
+            model_locks: Mutex::new(HashMap::new()),
             auto_clean_running: Mutex::new(false),
         }
+    }
+
+    async fn get_lock(&self, model: &str) -> Arc<Mutex<()>> {
+        let mut map_lock = self.model_locks.lock().await;
+        let map_value = map_lock.contains_key(model);
+        if !map_value {
+            map_lock.insert(model.to_string(), Arc::new(Mutex::new(())));
+        }
+        map_lock.get(model).unwrap().clone()
     }
 
     pub async fn auto_clean(&self) -> Result<(), anyhow::Error> {
@@ -106,6 +119,8 @@ impl PersistentModelFactory {
 impl ModelFactory for PersistentModelFactory {
     async fn create(&self, model: ModelRef) -> Result<DynModel, anyhow::Error> {
         let model_ref = model.to_string();
+        let lock = self.get_lock(&model_ref).await;
+        let _lock_guard = lock.lock().await;
         let found = query!("SELECT data FROM instance WHERE model = ?", model_ref)
             .fetch_optional(get_executor())
             .await?;
@@ -133,6 +148,8 @@ impl ModelFactory for PersistentModelFactory {
     }
 
     async fn destroy(&self, model: DynModel) -> Result<(), anyhow::Error> {
+        let lock = self.get_lock(model.name().await).await;
+        let _lock_guard = lock.lock().await;
         let id = model.id().await.to_string();
         self.parent.destroy(model).await?;
         query!("DELETE FROM instance WHERE id = ?", id)
