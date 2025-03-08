@@ -12,11 +12,9 @@ fn default_timeout() -> u32 {
 fn default_retry_interval() -> u32 {
     60
 }
-
 fn default_gpu_memory_margin() -> u64 {
     5
 }
-
 fn default_disk_storage_margin() -> u64 {
     50
 }
@@ -25,8 +23,7 @@ fn default_disk_storage_margin() -> u64 {
 pub struct Conf {
     pub port: u16,
     pub tls: Option<TlsConfig>,
-    pub advertise_models: HashSet<String>,
-    pub only_allow_advertised_models: Option<bool>,
+    pub models: HashMap<String, Model>,
     pub sqlite_url: String,
     #[serde(default = "default_timeout")]
     pub model_timeout: u32,
@@ -34,7 +31,19 @@ pub struct Conf {
     pub model_retry_interval: u32,
     pub huggingface: HuggingfaceConf,
     pub factory: FactoryConf,
-    pub hashes: HashSet<String>,
+    pub users: HashMap<String, User>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct Model {
+    pub name: Option<String>,
+    pub timeout: Option<u32>,
+    pub limit_to_users: Option<HashSet<String>>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct User {
+    pub tokens: HashSet<String>,
 }
 
 #[derive(Deserialize, Debug)]

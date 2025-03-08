@@ -1,4 +1,4 @@
-use crate::config::CONFIG;
+use crate::config::{User, CONFIG};
 use crate::handler::factories::{get_factory, ModelFactory};
 use crate::handler::models::{DynModel, ModelResponse, RetryingModel};
 use crate::handler::utils::ModelRef;
@@ -12,9 +12,9 @@ pub async fn completions(
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<ModelResponse, StatusCode> {
-    if !verify_authorization(&headers) {
+    let Some((username, _user)) = verify_authorization(&headers) else {
         return Err(StatusCode::UNAUTHORIZED);
-    }
+    };
 
     let Some(model) = body
         .get("model")
@@ -25,12 +25,19 @@ pub async fn completions(
     };
     debug!("Received request for model {model:?}");
 
-    if CONFIG.only_allow_advertised_models.unwrap_or(false) {
-        let model_name = model.to_string();
-        if !CONFIG.advertise_models.contains(&model_name) {
-            warn!("{model_name} is not in the list of allowed models");
-            return Err(StatusCode::FORBIDDEN);
+    if let Some(model_conf) = CONFIG
+        .models
+        .get(&model.to_string())
+        .or_else(|| CONFIG.models.get("*"))
+    {
+        if let Some(limited) = &model_conf.limit_to_users {
+            if !limited.contains(username) {
+                warn!("{username} is not allowed to use {model}");
+                return Err(StatusCode::FORBIDDEN);
+            }
         }
+    } else {
+        return Err(StatusCode::NOT_FOUND);
     }
 
     let model: DynModel = match get_factory().create(model).await {
@@ -50,25 +57,38 @@ pub async fn completions(
 }
 
 pub async fn models(headers: HeaderMap) -> Result<Json<Value>, StatusCode> {
-    if !verify_authorization(&headers) {
+    let Some((username, _user)) = verify_authorization(&headers) else {
         return Err(StatusCode::UNAUTHORIZED);
-    }
+    };
+
+    let models = CONFIG
+        .models
+        .iter()
+        .filter(|(_, model)| match &model.limit_to_users {
+            Some(users) => users.contains(username),
+            None => true,
+        })
+        .map(|(key, model)| json!({"id": key, "name": model.name.as_ref().unwrap_or(key)}))
+        .collect::<Vec<Value>>();
 
     Ok(Json(json!({
-        "data": CONFIG.advertise_models.iter().map(|model| json!({"id": model, "name": model})).collect::<Vec<Value>>()
+        "data": models,
     })))
 }
 
-fn verify_authorization(headers: &HeaderMap) -> bool {
+fn verify_authorization(headers: &HeaderMap) -> Option<(&String, &User)> {
     headers
         .get(header::AUTHORIZATION)
         .and_then(|header| header.to_str().ok())
         .and_then(|header| header.strip_prefix("Bearer "))
-        .is_some_and(|token| {
+        .and_then(|token| {
             let mut hasher = sha2::Sha256::new();
             hasher.update(token.as_bytes());
             let hash = hasher.finalize();
             let encoded = hex::encode(hash);
-            CONFIG.hashes.contains(&encoded)
+            CONFIG
+                .users
+                .iter()
+                .find(|(_name, u)| u.tokens.contains(&encoded))
         })
 }

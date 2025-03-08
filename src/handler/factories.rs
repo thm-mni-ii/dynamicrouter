@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use crate::config::{FactoryConf, CONFIG};
 use crate::db::get_executor;
 use crate::handler::kubernetes::KubernetesModelFactory;
@@ -8,6 +7,7 @@ use crate::handler::utils::ModelRef;
 use log::{error, info};
 use once_cell::sync::OnceCell;
 use sqlx::query;
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::process::exit;
@@ -96,14 +96,20 @@ impl PersistentModelFactory {
     }
 
     pub async fn auto_clean(&self) -> Result<(), anyhow::Error> {
-        let results = query!(
-            "SELECT data FROM instance WHERE last_request < unixepoch() - ?",
-            CONFIG.model_timeout
-        )
-        .fetch_all(get_executor())
-        .await?;
+        let results = query!("SELECT data, last_request, unixepoch() AS now FROM instance")
+            .fetch_all(get_executor())
+            .await?;
         for item in results {
             let model = self.parent.restore(&item.data).await?;
+            let timeout = CONFIG
+                .models
+                .get(model.name().await)
+                .or_else(|| CONFIG.models.get("*"))
+                .and_then(|model| model.timeout)
+                .unwrap_or(CONFIG.model_timeout);
+            if item.last_request + i64::from(timeout) > item.now {
+                continue;
+            }
             info!(
                 "Cleaning instance {} for {}",
                 model.id().await,
