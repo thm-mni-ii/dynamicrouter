@@ -64,6 +64,7 @@ pub async fn models(headers: HeaderMap) -> Result<Json<Value>, StatusCode> {
     let models = CONFIG
         .models
         .iter()
+        .filter(|(name, model)| !model.hidden.unwrap_or(*name == "*"))
         .filter(|(_, model)| match &model.limit_to_users {
             Some(users) => users.contains(username),
             None => true,

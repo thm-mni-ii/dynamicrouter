@@ -39,6 +39,7 @@ pub struct Model {
     pub name: Option<String>,
     pub timeout: Option<u32>,
     pub limit_to_users: Option<HashSet<String>>,
+    pub hidden: Option<bool>,
 }
 
 #[derive(Deserialize, Debug)]
