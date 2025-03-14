@@ -1,18 +1,19 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::str::FromStr;
 
-pub const GIB_IN_BYTE: u64 = 1024_u64.pow(3);
-
 static MODEL_REF_REGEXP: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(.*?)/(.*?)(?::(.*?))?(?:@(.*?))?$").unwrap());
+    Lazy::new(|| Regex::new(r"^(.*?)/(.*?)(?::(.*?))?(?:/(.*?))?(?:@(.*?))?$").unwrap());
+static QUANT_REGEXP: Lazy<Regex> = Lazy::new(|| Regex::new(r"^([Gg])(\d{1,2})$").unwrap());
 
 #[derive(Debug, Clone)]
 pub struct ModelRef {
     pub org: String,
     pub repo: String,
     pub rev: Option<String>,
+    pub path: Option<String>,
     pub quant: Option<QuantType>,
 }
 
@@ -35,7 +36,8 @@ impl FromStr for ModelRef {
                 .as_str()
                 .to_string(),
             rev: res.get(3).map(|m| m.as_str().to_string()),
-            quant: res.get(4).map(|m| m.as_str().parse()).transpose()?,
+            path: res.get(4).map(|m| m.as_str().to_string()),
+            quant: res.get(5).map(|m| m.as_str().parse()).transpose()?,
         })
     }
 }
@@ -52,6 +54,9 @@ impl Display for ModelRef {
         if let Some(rev) = &self.rev {
             write!(f, ":{rev}")?;
         }
+        if let Some(path) = &self.path {
+            write!(f, "/{path}")?;
+        }
         if let Some(quant) = &self.quant {
             write!(f, "@{quant}")?;
         }
@@ -65,6 +70,7 @@ pub enum QuantType {
     FP16,
     FP8,
     FP4,
+    Gguf(u8),
 }
 
 impl QuantType {
@@ -74,6 +80,7 @@ impl QuantType {
             QuantType::FP16 => 2.0,
             QuantType::FP8 => 1.0,
             QuantType::FP4 => 0.5,
+            QuantType::Gguf(q) => f64::from(q) / 8.0,
         }
     }
 }
@@ -87,7 +94,27 @@ impl FromStr for QuantType {
             "fp16" => QuantType::FP16,
             "fp8" => QuantType::FP8,
             "fp4" => QuantType::FP4,
-            _ => return Err(ModelRefParseError::InvalidQuant()),
+            oe => {
+                let res = QUANT_REGEXP
+                    .captures(oe)
+                    .ok_or(ModelRefParseError::InvalidQuant())?;
+                match res
+                    .get(1)
+                    .ok_or(ModelRefParseError::InvalidQuant())?
+                    .as_str()
+                    .to_uppercase()
+                    .as_str()
+                {
+                    "G" => QuantType::Gguf(
+                        res.get(2)
+                            .ok_or(ModelRefParseError::InvalidQuant())?
+                            .as_str()
+                            .parse()
+                            .map_err(|_| ModelRefParseError::InvalidQuant())?,
+                    ),
+                    _ => return Err(ModelRefParseError::InvalidModelRef()),
+                }
+            }
         })
     }
 }
@@ -98,10 +125,11 @@ impl Display for QuantType {
             f,
             "{}",
             match self {
-                QuantType::FP32 => "fp32",
-                QuantType::FP16 => "fp16",
-                QuantType::FP8 => "fp8",
-                QuantType::FP4 => "fp4",
+                QuantType::FP32 => "fp32".to_string(),
+                QuantType::FP16 => "fp16".to_string(),
+                QuantType::FP8 => "fp8".to_string(),
+                QuantType::FP4 => "fp4".to_string(),
+                QuantType::Gguf(size) => format!("G{size}"),
             }
         )
     }
@@ -115,22 +143,35 @@ pub enum ModelRefParseError {
     InvalidQuant(),
 }
 
-pub fn build_docker_args(model: &ModelRef) -> Vec<String> {
-    let mut args = Vec::new();
-    args.append(&mut vec!["--model-id".to_string(), model.get_hf_id()]);
+const GIB_IN_BYTE: u64 = 1024_u64.pow(3);
 
-    if let Some(rev) = &model.rev {
-        args.append(&mut vec!["--revision".to_string(), rev.to_string()]);
+#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Deserialize, Serialize, Default)]
+#[repr(transparent)]
+pub struct ByteSize(u64);
+
+impl ByteSize {
+    #[inline]
+    pub fn from_bytes(bytes: u64) -> ByteSize {
+        ByteSize(bytes)
     }
 
-    match &model.quant {
-        Some(QuantType::FP8) => args.append(&mut vec!["--quantize".to_string(), "fp8".to_string()]),
-        Some(QuantType::FP4) => args.append(&mut vec![
-            "--quantize".to_string(),
-            "bitsandbytes-fp4".to_string(),
-        ]),
-        _ => {}
-    };
+    #[inline]
+    pub fn from_gibibyte(gibibyte: u64) -> ByteSize {
+        ByteSize(gibibyte * GIB_IN_BYTE)
+    }
 
-    args
+    #[inline]
+    pub fn to_gibibytes(self) -> f64 {
+        self.0 as f64 / GIB_IN_BYTE as f64
+    }
+
+    #[inline]
+    pub fn bytes(self) -> u64 {
+        self.0
+    }
+
+    #[inline]
+    pub fn factor(self, factor: f64) -> ByteSize {
+        ByteSize::from_bytes((self.0 as f64 * factor).ceil() as u64)
+    }
 }

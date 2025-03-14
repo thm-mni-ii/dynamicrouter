@@ -1,3 +1,4 @@
+pub mod backend;
 pub mod factories;
 pub mod huggingface;
 mod kubernetes;

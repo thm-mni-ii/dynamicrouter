@@ -1,8 +1,9 @@
-use crate::config::{KubernetesGpu, CONFIG};
+use crate::config::{KubernetesConf, KubernetesGpu, CONFIG};
+use crate::handler::backend::get_first_supported_backend;
 use crate::handler::factories::ModelFactory;
-use crate::handler::huggingface::{calculate_needed_space, get_model_information};
+use crate::handler::huggingface::{get_from_config_or_calculate, get_model_information};
 use crate::handler::models::{DynModel, HttpModel, Model, ModelResponse};
-use crate::handler::utils::{build_docker_args, ModelRef, QuantType, GIB_IN_BYTE};
+use crate::handler::utils::{ByteSize, ModelRef};
 use anyhow::Error;
 use async_trait::async_trait;
 use k8s_openapi::api::core::v1::Pod;
@@ -31,9 +32,9 @@ impl KubernetesModelFactory {
     }
 }
 
-pub fn calculate_gpu_match(gpu: &KubernetesGpu, needed: u64) -> Option<(String, u8)> {
-    let gpu_size = gpu.memory * GIB_IN_BYTE;
-    let mut gpus_needed = (needed / gpu_size) + 1;
+pub fn calculate_gpu_match(gpu: &KubernetesGpu, needed: ByteSize) -> Option<(String, u8)> {
+    let gpu_size = ByteSize::from_gibibyte(gpu.memory);
+    let mut gpus_needed = (needed.bytes() / gpu_size.bytes()) + 1;
     if gpus_needed != 1 && gpus_needed % 2 == 1 {
         gpus_needed += 1;
     }
@@ -45,12 +46,11 @@ pub fn calculate_gpu_match(gpu: &KubernetesGpu, needed: u64) -> Option<(String, 
 }
 
 fn calculate_needed_gpu(
+    config: &KubernetesConf,
     model: &ModelRef,
-    needed_memory: u64,
+    needed_memory: ByteSize,
 ) -> Result<(String, u8), anyhow::Error> {
-    let mut options = CONFIG
-        .factory
-        .as_kubernetes()
+    let mut options = config
         .gpus
         .iter()
         .filter_map(|gpu| calculate_gpu_match(gpu, needed_memory))
@@ -68,15 +68,18 @@ fn calculate_needed_gpu(
 #[async_trait]
 impl ModelFactory for KubernetesModelFactory {
     async fn create(&self, model: ModelRef) -> Result<DynModel, anyhow::Error> {
-        let model_info = get_model_information(&model.get_hf_id()).await?;
-        let needed_gpu_memory = calculate_needed_space(
-            model_info.parameter_count,
-            model.quant.unwrap_or(QuantType::FP16),
-        );
+        let config = CONFIG
+            .factory
+            .as_kubernetes()
+            .get_for_model(&model.to_string());
+
+        let fut = get_model_information(model.get_hf_id());
+        let needed_gpu_memory = get_from_config_or_calculate(&model, fut).await?;
 
         let (gpu_id, gpu_count) = calculate_needed_gpu(
+            &config,
             &model,
-            needed_gpu_memory + CONFIG.factory.as_kubernetes().gpu_memory_margin * GIB_IN_BYTE,
+            needed_gpu_memory.factor(config.gpu_memory_margin_factor),
         )?;
         info!("Using {gpu_count} x {gpu_id} for {model}");
         let id = hex::encode(rand::random::<[u8; 8]>());
@@ -93,14 +96,14 @@ impl ModelFactory for KubernetesModelFactory {
             "nvidia.com/gpu.product": gpu_id
         });
 
-        if let Some(additional_node_selector) =
-            &CONFIG.factory.as_kubernetes().additional_node_selector
-        {
+        if let Some(additional_node_selector) = &config.additional_node_selector {
             let node_selector_obj = node_selector.as_object_mut().unwrap();
             for (key, value) in additional_node_selector {
                 node_selector_obj.insert(key.to_string(), json!(value));
             }
         }
+
+        let backend = get_first_supported_backend(&model)?;
 
         self.pod_api.create(
             &PostParams::default(),
@@ -113,8 +116,9 @@ impl ModelFactory for KubernetesModelFactory {
     "spec": {
         "containers": [{
             "name": "inference",
-            "image": CONFIG.factory.as_kubernetes().image,
-            "args": build_docker_args(&model),
+            "image": backend.get_image(),
+            "command": backend.get_entrypoint(&model),
+            "args": backend.get_args(&model),
             "volumeMounts": [
                 {"name": "models", "mountPath": "/models"}
             ],
@@ -126,9 +130,9 @@ impl ModelFactory for KubernetesModelFactory {
             }
         }],
         "nodeSelector": node_selector,
-        "tolerations": CONFIG.factory.as_kubernetes().additional_tolerations,
+        "tolerations": config.additional_tolerations,
         "volumes": [
-            {"name": "models", "persistentVolumeClaim": {"claimName": CONFIG.factory.as_kubernetes().pvc_name}}
+            {"name": "models", "persistentVolumeClaim": {"claimName": config.pvc_name}}
         ]
     }
 }))?,
