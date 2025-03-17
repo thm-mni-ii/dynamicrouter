@@ -38,7 +38,7 @@ pub struct Conf {
 #[derive(Deserialize, Debug)]
 pub struct Model {
     pub name: Option<String>,
-    pub param_count: Option<u64>,
+    pub parameter_count: Option<u64>,
     pub timeout: Option<u32>,
     pub limit_to_users: Option<HashSet<String>>,
     pub hidden: Option<bool>,
@@ -204,18 +204,15 @@ pub struct KubernetesModel {
 #[serde(tag = "type")]
 pub enum BackendConf {
     #[serde(rename = "tgi")]
-    Tgi(TgiConf),
+    Tgi(BackendImageConf),
     #[serde(rename = "vllm")]
-    Vllm(VllmConf),
+    Vllm(BackendImageConf),
+    #[serde(rename = "llama_cpp")]
+    LlamaCpp(BackendImageConf),
 }
 
 #[derive(Deserialize, Debug)]
-pub struct TgiConf {
-    pub image: String,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct VllmConf {
+pub struct BackendImageConf {
     pub image: String,
 }
 

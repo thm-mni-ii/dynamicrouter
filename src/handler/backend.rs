@@ -1,4 +1,4 @@
-use crate::config::{BackendConf, TgiConf, VllmConf, CONFIG};
+use crate::config::{BackendConf, BackendImageConf, CONFIG};
 use crate::handler::utils::{ModelRef, QuantType};
 use once_cell::sync::Lazy;
 use std::clone::Clone;
@@ -14,10 +14,13 @@ pub static BACKEND: Lazy<Vec<DynBackend>> = Lazy::new(|| {
         .iter()
         .map(|backend| {
             let backend: DynBackend = match backend {
-                BackendConf::Tgi(TgiConf { image }) => Arc::new(TgiBackend {
+                BackendConf::Tgi(BackendImageConf { image }) => Arc::new(TgiBackend {
                     image: image.clone(),
                 }),
-                BackendConf::Vllm(VllmConf { image }) => Arc::new(VllmBackend {
+                BackendConf::Vllm(BackendImageConf { image }) => Arc::new(VllmBackend {
+                    image: image.clone(),
+                }),
+                BackendConf::LlamaCpp(BackendImageConf { image }) => Arc::new(LlamaCppBackend {
                     image: image.clone(),
                 }),
             };
@@ -172,6 +175,42 @@ impl Backend for VllmBackend {
             Some(QuantType::Gguf(_)) => Some(vec!["/bin/bash".to_string()]),
             _ => None,
         }
+    }
+}
+
+pub struct LlamaCppBackend {
+    image: String,
+}
+
+impl Backend for LlamaCppBackend {
+    fn get_image(&self) -> String {
+        self.image.clone()
+    }
+
+    fn is_supported(&self, model: &ModelRef) -> bool {
+        matches!(model.quant, Some(QuantType::Gguf(_)))
+    }
+
+    fn get_args(&self, model: &ModelRef) -> Vec<String> {
+        let mut args = vec![
+            "--no-webui".to_string(),
+            "--port".to_string(),
+            "80".to_string(),
+            "--n-gpu-layers".to_string(),
+            "99".to_string(),
+            "--hf-repo".to_string(),
+            model.get_hf_id(),
+        ];
+
+        if let Some(path) = &model.path {
+            args.append(&mut vec!["--hf-file".to_string(), path.clone()]);
+        }
+
+        args
+    }
+
+    fn get_entrypoint(&self, _model: &ModelRef) -> Option<Vec<String>> {
+        None
     }
 }
 

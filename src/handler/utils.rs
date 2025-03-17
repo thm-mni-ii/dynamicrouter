@@ -1,3 +1,5 @@
+use crate::config::CONFIG;
+use crate::handler::huggingface::HfModel;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -174,4 +176,56 @@ impl ByteSize {
     pub fn factor(self, factor: f64) -> ByteSize {
         ByteSize::from_bytes((self.0 as f64 * factor).ceil() as u64)
     }
+}
+
+pub fn calculate_needed_space(parameters: u64, quant: QuantType) -> ByteSize {
+    let fb = parameters as f64 * quant.get_byte_size();
+    ByteSize::from_bytes(fb.ceil() as u64)
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct ModelSizes {
+    pub gpu: ByteSize,
+    pub storage: ByteSize,
+}
+
+impl ModelSizes {
+    pub async fn get(model: &ModelRef) -> Result<ModelSizes, anyhow::Error> {
+        let model_information = HfModel::get(model.get_hf_id()).await?;
+        let parameter_override = CONFIG
+            .models
+            .get(&model.to_string())
+            .and_then(|model| model.parameter_count);
+
+        Ok(ModelSizes {
+            gpu: calculate_needed_space(
+                parameter_override
+                    .or(model_information.parameter_count)
+                    .ok_or(ModelSizeError::GetParameter())?,
+                model.quant.unwrap_or(QuantType::FP16),
+            ),
+            storage: match parameter_override {
+                Some(parameters) => calculate_needed_space(
+                    parameters,
+                    match model.quant {
+                        Some(QuantType::Gguf(q)) => QuantType::Gguf(q),
+                        _ => QuantType::FP16,
+                    },
+                ),
+                None => ByteSize::from_bytes(
+                    model_information
+                        .storage_size
+                        .ok_or(ModelSizeError::GetStorageSize())?,
+                ),
+            },
+        })
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ModelSizeError {
+    #[error("missing total safetensors parameter count")]
+    GetParameter(),
+    #[error("missing storage size")]
+    GetStorageSize(),
 }

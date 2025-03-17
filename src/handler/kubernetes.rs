@@ -1,9 +1,8 @@
 use crate::config::{KubernetesConf, KubernetesGpu, CONFIG};
 use crate::handler::backend::get_first_supported_backend;
 use crate::handler::factories::ModelFactory;
-use crate::handler::huggingface::{get_from_config_or_calculate, get_model_information};
 use crate::handler::models::{DynModel, HttpModel, Model, ModelResponse};
-use crate::handler::utils::{ByteSize, ModelRef};
+use crate::handler::utils::{ByteSize, ModelRef, ModelSizes};
 use anyhow::Error;
 use async_trait::async_trait;
 use k8s_openapi::api::core::v1::Pod;
@@ -73,13 +72,12 @@ impl ModelFactory for KubernetesModelFactory {
             .as_kubernetes()
             .get_for_model(&model.to_string());
 
-        let fut = get_model_information(model.get_hf_id());
-        let needed_gpu_memory = get_from_config_or_calculate(&model, fut).await?;
+        let model_sizes = ModelSizes::get(&model).await?;
 
         let (gpu_id, gpu_count) = calculate_needed_gpu(
             &config,
             &model,
-            needed_gpu_memory.factor(config.gpu_memory_margin_factor),
+            model_sizes.gpu.factor(config.gpu_memory_margin_factor),
         )?;
         info!("Using {gpu_count} x {gpu_id} for {model}");
         let id = hex::encode(rand::random::<[u8; 8]>());

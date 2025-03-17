@@ -1,9 +1,8 @@
 use crate::config::{RunpodConf, RunpodGpu, CONFIG};
 use crate::handler::backend::get_first_supported_backend;
 use crate::handler::factories::ModelFactory;
-use crate::handler::huggingface::{get_from_config_or_calculate, get_model_information};
 use crate::handler::models::{DynModel, HttpModel};
-use crate::handler::utils::{ByteSize, ModelRef};
+use crate::handler::utils::{ByteSize, ModelRef, ModelSizes};
 use log::{debug, info};
 use once_cell::sync::Lazy;
 use reqwest::{Client, Url};
@@ -67,23 +66,21 @@ fn calculate_needed_gpu(
 impl ModelFactory for RunpodModelFactory {
     async fn create(&self, model: ModelRef) -> Result<DynModel, anyhow::Error> {
         let config = CONFIG.factory.as_runpod().get_for_model(&model.to_string());
-
-        let model_information = get_model_information(model.get_hf_id()).await?;
-        let needed_gpu_memory =
-            get_from_config_or_calculate(&model, async { Ok(model_information.clone()) }).await?;
+        let model_sizes = ModelSizes::get(&model).await?;
 
         let (gpu_id, gpu_count) = calculate_needed_gpu(
             &config,
             &model,
-            needed_gpu_memory.factor(config.gpu_memory_margin_factor),
+            model_sizes.gpu.factor(config.gpu_memory_margin_factor),
         )?;
+
         info!("Using {gpu_count} x {gpu_id} for {model}");
 
         let backend = get_first_supported_backend(&model)?;
 
         let mut input = json!({
             "cloudType":"SECURE",
-            "containerDiskInGb": ByteSize::from_bytes(model_information.storage_size).factor(config.disk_storage_margin_factor).to_gibibytes().ceil() as u64,
+            "containerDiskInGb": model_sizes.storage.factor(config.disk_storage_margin_factor).to_gibibytes().ceil() as u64,
             "volumeInGb":0,
             "volumeMountPath": "/data",
             "gpuCount":gpu_count,
