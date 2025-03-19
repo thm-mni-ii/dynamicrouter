@@ -19,6 +19,12 @@ pub async fn completions(
     let Some(model) = body
         .get("model")
         .and_then(|v| v.as_str())
+        .map(|m| {
+            CONFIG
+                .aliases
+                .get(m)
+                .map_or_else(|| m.to_string(), |a| a.to.clone())
+        })
         .and_then(|m| m.parse::<ModelRef>().ok())
     else {
         return Err(StatusCode::BAD_REQUEST);

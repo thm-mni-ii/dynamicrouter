@@ -6,9 +6,11 @@ use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use futures_util::StreamExt;
 use log::warn;
+use once_cell::sync::Lazy;
 use reqwest::{Client, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -20,6 +22,7 @@ type ModelStream =
     Box<dyn futures_core::Stream<Item = Result<Bytes, anyhow::Error>> + Send + Unpin>;
 
 pub struct ModelResponse {
+    pub status: StatusCode,
     pub content_type: Option<String>,
     pub content_length: Option<u64>,
     pub body: ModelStream,
@@ -27,7 +30,7 @@ pub struct ModelResponse {
 
 impl IntoResponse for ModelResponse {
     fn into_response(self) -> Response {
-        let mut builder = Response::builder().status(StatusCode::OK);
+        let mut builder = Response::builder().status(self.status);
         builder = match self.content_type {
             Some(ct) => builder.header(header::CONTENT_TYPE, ct),
             None => builder,
@@ -83,6 +86,14 @@ pub struct HttpModel {
     client: Client,
 }
 
+static OK_STATUS_CODES: Lazy<HashSet<StatusCode>> = Lazy::new(|| {
+    HashSet::from_iter(vec![
+        StatusCode::OK,
+        StatusCode::BAD_REQUEST,
+        StatusCode::UNPROCESSABLE_ENTITY,
+    ])
+});
+
 impl HttpModel {
     pub fn new_dyn(id: String, name: String, url: Url, token: Option<String>) -> DynModel {
         Arc::new(Self {
@@ -115,9 +126,14 @@ impl Model for HttpModel {
             Some(token) => builder.bearer_auth(token),
             None => builder,
         };
-        let res = builder.send().await?.error_for_status()?;
+        let res = builder.send().await?;
+        let status = res.status();
+        if !OK_STATUS_CODES.contains(&status) {
+            return Err(ModelError::UnexpectedStatus(status).into());
+        }
 
         Ok(ModelResponse {
+            status,
             content_type: res
                 .headers()
                 .get("Content-Type")
@@ -178,4 +194,6 @@ impl Model for RetryingModel {
 enum ModelError {
     #[error("model not responding after exceeding retries")]
     RetriesExceeded(),
+    #[error("unexpected status {0}")]
+    UnexpectedStatus(StatusCode),
 }

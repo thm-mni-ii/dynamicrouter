@@ -1,4 +1,5 @@
 use crate::config::CONFIG;
+use crate::handler::utils::{ByteSize, ParameterCount};
 use once_cell::sync::Lazy;
 use reqwest::Client;
 use secrecy::ExposeSecret;
@@ -9,8 +10,8 @@ static CLIENT: Lazy<Client> = Lazy::new(Client::new);
 
 #[derive(Debug, Copy, Clone)]
 pub struct HfModel {
-    pub parameter_count: Option<u64>,
-    pub storage_size: Option<u64>,
+    pub parameter_count: Option<ParameterCount>,
+    pub storage_size: Option<ByteSize>,
 }
 
 impl HfModel {

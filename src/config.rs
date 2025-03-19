@@ -18,6 +18,9 @@ fn default_gpu_memory_margin_factor() -> f64 {
 fn default_disk_storage_margin_factor() -> f64 {
     2.0
 }
+fn default_aliases() -> HashMap<String, Alias> {
+    HashMap::new()
+}
 
 #[derive(Deserialize, Debug)]
 pub struct Conf {
@@ -33,12 +36,13 @@ pub struct Conf {
     pub factory: FactoryConf,
     pub backends: Vec<BackendConf>,
     pub users: HashMap<String, User>,
+    #[serde(default = "default_aliases")]
+    pub aliases: HashMap<String, Alias>,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct Model {
     pub name: Option<String>,
-    pub parameter_count: Option<u64>,
     pub timeout: Option<u32>,
     pub limit_to_users: Option<HashSet<String>>,
     pub hidden: Option<bool>,
@@ -228,3 +232,8 @@ pub static CONFIG: Lazy<Conf> = Lazy::new(|| {
         exit(1)
     })
 });
+
+#[derive(Deserialize, Debug)]
+pub struct Alias {
+    pub to: String,
+}
