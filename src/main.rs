@@ -4,6 +4,7 @@
 #![allow(clippy::cast_sign_loss)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::enum_variant_names)]
+#![allow(clippy::match_wildcard_for_single_variants)]
 
 mod config;
 mod db;

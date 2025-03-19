@@ -11,6 +11,7 @@ static MODEL_REF_REGEXP: Lazy<Regex> =
 static QUANT_REGEXP: Lazy<Regex> = Lazy::new(|| Regex::new(r"^([Gg])(\d{1,2})$").unwrap());
 static PARAMETER_COUNT_EXTRACTION_REGEXP: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\d+[BMbm]").unwrap());
+static QUANT_EXTRACTION_REGEXP: Lazy<Regex> = Lazy::new(|| Regex::new(r"[qQ](\d+)").unwrap());
 
 #[derive(Debug, Clone)]
 pub struct ModelRef {
@@ -18,9 +19,10 @@ pub struct ModelRef {
     pub repo: String,
     pub rev: Option<String>,
     pub path: Option<String>,
+    pub param_count: Option<ParameterCount>,
     pub quant: Option<QuantType>,
     pub param_count_inferred: Option<ParameterCount>,
-    pub param_count_explicit: Option<ParameterCount>,
+    pub quant_inferred: Option<QuantType>,
 }
 
 impl FromStr for ModelRef {
@@ -43,13 +45,19 @@ impl FromStr for ModelRef {
                 .to_string(),
             rev: res.get(3).map(|m| m.as_str().to_string()),
             path: res.get(4).map(|m| m.as_str().to_string()),
-            param_count_explicit: res.get(5).map(|m| m.as_str().parse()).transpose()?,
+            param_count: res.get(5).map(|m| m.as_str().parse()).transpose()?,
             quant: res.get(6).map(|m| m.as_str().parse()).transpose()?,
             param_count_inferred: res
                 .get(0)
                 .and_then(|m| PARAMETER_COUNT_EXTRACTION_REGEXP.find(m.as_str()))
                 .map(|m| m.as_str().parse())
                 .transpose()?,
+            quant_inferred: res
+                .get(4)
+                .and_then(|m| QUANT_EXTRACTION_REGEXP.captures(m.as_str()))
+                .and_then(|m| m.get(1))
+                .and_then(|q| q.as_str().parse::<u8>().ok())
+                .map(QuantType::Gguf),
         })
     }
 }
@@ -57,6 +65,11 @@ impl FromStr for ModelRef {
 impl ModelRef {
     pub fn get_hf_id(&self) -> String {
         format!("{}/{}", self.org, self.repo)
+    }
+    pub fn get_quant(&self) -> QuantType {
+        self.quant
+            .or(self.quant_inferred)
+            .unwrap_or(QuantType::FP16)
     }
 }
 
@@ -69,7 +82,7 @@ impl Display for ModelRef {
         if let Some(path) = &self.path {
             write!(f, "/{path}")?;
         }
-        if let Some(param_count_explicit) = &self.param_count_explicit {
+        if let Some(param_count_explicit) = &self.param_count {
             write!(f, "#{param_count_explicit}")?;
         }
         if let Some(quant) = &self.quant {
@@ -259,47 +272,31 @@ pub struct ModelSizes {
 }
 
 impl ModelSizes {
-    /*
-    gpu:
-    override
-    explicit
-    hf
-    implicit
-    */
-    /*
-    hf
-    override
-    explicit
-    implicit
-     */
     pub async fn get(model: &ModelRef) -> Result<ModelSizes, anyhow::Error> {
         let model_information = HfModel::get(model.get_hf_id()).await?;
 
         Ok(ModelSizes {
             gpu: calculate_needed_space(
                 model
-                    .param_count_explicit
+                    .param_count
                     .or(model_information.parameter_count)
                     .or(model.param_count_inferred)
                     .ok_or(ModelSizeError::GetParameter())?,
-                model.quant.unwrap_or(QuantType::FP16),
+                model.get_quant(),
             ),
             storage: model_information
                 .storage_size
                 .or_else(|| {
                     Some(calculate_needed_space(
                         match model
-                            .param_count_explicit
+                            .param_count
                             .or(model_information.parameter_count)
                             .or(model.param_count_inferred)
                         {
                             Some(params) => params,
                             None => return None,
                         },
-                        match model.quant {
-                            Some(QuantType::Gguf(q)) => QuantType::Gguf(q),
-                            _ => QuantType::FP16,
-                        },
+                        model.get_quant(),
                     ))
                 })
                 .ok_or(ModelSizeError::GetStorageSize())?,
