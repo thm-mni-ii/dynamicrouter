@@ -42,6 +42,7 @@ pub trait Backend: Send + Sync {
     fn is_supported(&self, model: &ModelRef) -> bool;
     fn get_args(&self, model: &ModelRef) -> Vec<String>;
     fn get_entrypoint(&self, model: &ModelRef) -> Option<Vec<String>>;
+    fn get_mount(&self, model: &ModelRef) -> (String, String);
 }
 
 pub struct TgiBackend {
@@ -88,6 +89,10 @@ impl Backend for TgiBackend {
 
     fn get_entrypoint(&self, _model: &ModelRef) -> Option<Vec<String>> {
         None
+    }
+
+    fn get_mount(&self, _model: &ModelRef) -> (String, String) {
+        ("models".to_string(), "/models".to_string())
     }
 }
 
@@ -176,6 +181,10 @@ impl Backend for VllmBackend {
             _ => None,
         }
     }
+
+    fn get_mount(&self, _model: &ModelRef) -> (String, String) {
+        ("models".to_string(), "/models".to_string())
+    }
 }
 
 pub struct LlamaCppBackend {
@@ -211,6 +220,13 @@ impl Backend for LlamaCppBackend {
 
     fn get_entrypoint(&self, _model: &ModelRef) -> Option<Vec<String>> {
         None
+    }
+
+    fn get_mount(&self, _model: &ModelRef) -> (String, String) {
+        (
+            "llama.cpp".to_string(),
+            "/root/.cache/llama.cpp/".to_string(),
+        )
     }
 }
 

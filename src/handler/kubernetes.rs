@@ -102,6 +102,7 @@ impl ModelFactory for KubernetesModelFactory {
         }
 
         let backend = get_first_supported_backend(&model)?;
+        let (sub_path, mount_path) = backend.get_mount(&model);
 
         self.pod_api.create(
             &PostParams::default(),
@@ -118,7 +119,7 @@ impl ModelFactory for KubernetesModelFactory {
             "command": backend.get_entrypoint(&model),
             "args": backend.get_args(&model),
             "volumeMounts": [
-                {"name": "models", "mountPath": "/models"}
+                {"name": "models", "subPath": sub_path, "mountPath": mount_path}
             ],
             "env": env,
             "resources": {
@@ -138,7 +139,7 @@ impl ModelFactory for KubernetesModelFactory {
 
         Ok(KubernetesResolvingModel::new_dyn(
             id,
-            model.get_hf_id(),
+            model.to_string(),
             self.pod_api.clone(),
         ))
     }
