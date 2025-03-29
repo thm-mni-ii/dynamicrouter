@@ -1,4 +1,6 @@
-use crate::handler::huggingface::HfModel;
+pub mod huggingface;
+
+use crate::utils::huggingface::HfModel;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};

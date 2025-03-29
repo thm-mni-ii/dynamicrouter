@@ -1,5 +1,5 @@
 use crate::config::CONFIG;
-use crate::handler::utils::{ByteSize, ParameterCount};
+use crate::utils::{ByteSize, ParameterCount};
 use once_cell::sync::Lazy;
 use reqwest::Client;
 use secrecy::ExposeSecret;

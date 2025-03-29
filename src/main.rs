@@ -6,14 +6,16 @@
 #![allow(clippy::enum_variant_names)]
 #![allow(clippy::match_wildcard_for_single_variants)]
 
+mod backends;
 mod config;
 mod db;
-mod handler;
+mod factories;
 mod routes;
 mod runtime;
+mod utils;
 
 use crate::config::{TlsConfig, CONFIG};
-use crate::handler::factories::init_factories;
+use crate::factories::init_factories;
 use crate::runtime::RUNTIME;
 use axum::routing::{get, post};
 use axum::Router;

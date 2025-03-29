@@ -1,8 +1,8 @@
+use crate::backends::get_first_supported_backend;
 use crate::config::{RunpodConf, RunpodGpu, CONFIG};
-use crate::handler::backend::get_first_supported_backend;
-use crate::handler::factories::ModelFactory;
-use crate::handler::models::{DynModel, HttpModel};
-use crate::handler::utils::{ByteSize, ModelRef, ModelSizes};
+use crate::factories::models::{DynModel, HttpModel};
+use crate::factories::ModelFactory;
+use crate::utils::{ByteSize, ModelRef, ModelSizes};
 use log::{debug, info};
 use once_cell::sync::Lazy;
 use reqwest::{Client, Url};

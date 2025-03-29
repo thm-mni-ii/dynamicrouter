@@ -1,7 +1,7 @@
 use crate::config::{User, CONFIG};
-use crate::handler::factories::{get_factory, ModelFactory};
-use crate::handler::models::{DynModel, ModelResponse, RetryingModel};
-use crate::handler::utils::ModelRef;
+use crate::factories::models::{DynModel, ModelResponse, RetryingModel};
+use crate::factories::{get_factory, ModelFactory};
+use crate::utils::ModelRef;
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::Json;
 use log::{debug, error, warn};

@@ -1,11 +1,15 @@
+mod kubernetes;
+pub mod models;
+mod runpod;
+
 use crate::config::{FactoryConf, CONFIG};
 use crate::db::get_executor;
-use crate::handler::kubernetes::KubernetesModelFactory;
-use crate::handler::models::DynModel;
-use crate::handler::runpod::RunpodModelFactory;
-use crate::handler::utils::ModelRef;
+use crate::utils::ModelRef;
+use kubernetes::KubernetesModelFactory;
 use log::{error, info};
+use models::DynModel;
 use once_cell::sync::OnceCell;
+use runpod::RunpodModelFactory;
 use sqlx::query;
 use std::collections::HashMap;
 use std::error::Error;

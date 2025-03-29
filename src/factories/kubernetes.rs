@@ -1,8 +1,8 @@
+use crate::backends::get_first_supported_backend;
 use crate::config::{KubernetesConf, KubernetesGpu, CONFIG};
-use crate::handler::backend::get_first_supported_backend;
-use crate::handler::factories::ModelFactory;
-use crate::handler::models::{DynModel, HttpModel, Model, ModelResponse};
-use crate::handler::utils::{ByteSize, ModelRef, ModelSizes};
+use crate::factories::models::{DynModel, HttpModel, Model, ModelResponse};
+use crate::factories::ModelFactory;
+use crate::utils::{ByteSize, ModelRef, ModelSizes};
 use anyhow::Error;
 use async_trait::async_trait;
 use k8s_openapi::api::core::v1::Pod;
