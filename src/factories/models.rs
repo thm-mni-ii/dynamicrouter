@@ -1,4 +1,5 @@
 use crate::config::CONFIG;
+use anyhow::Error;
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::header;
@@ -72,6 +73,11 @@ pub trait Model: Send + Sync {
     async fn name(&self) -> &str;
     async fn generate(&self, request: &Value) -> Result<ModelResponse, anyhow::Error>;
     async fn serialize(&self) -> Result<Vec<u8>, anyhow::Error>;
+    async fn invoke(
+        &self,
+        path: &str,
+        body: &Value,
+    ) -> Option<Result<ModelResponse, anyhow::Error>>;
 }
 
 pub type DynModel = Arc<dyn Model>;
@@ -108,20 +114,11 @@ impl HttpModel {
     pub fn deserialize(data: &[u8]) -> Result<DynModel, anyhow::Error> {
         Ok(Arc::new(serde_json::from_slice::<Self>(data)?))
     }
-}
 
-#[async_trait::async_trait]
-impl Model for HttpModel {
-    async fn id(&self) -> &str {
-        &self.id
-    }
-
-    async fn name(&self) -> &str {
-        &self.name
-    }
-
-    async fn generate(&self, request: &Value) -> Result<ModelResponse, anyhow::Error> {
-        let mut builder = self.client.post(self.url.clone()).json(request);
+    async fn request(&self, path: &str, request: &Value) -> Result<ModelResponse, anyhow::Error> {
+        let mut url = self.url.clone();
+        url.set_path(path);
+        let mut builder = self.client.post(url).json(request);
         builder = match &self.token {
             Some(token) => builder.bearer_auth(token),
             None => builder,
@@ -142,9 +139,32 @@ impl Model for HttpModel {
             body: Box::new(StreamAdapter::new(res.bytes_stream())),
         })
     }
+}
+
+#[async_trait::async_trait]
+impl Model for HttpModel {
+    async fn id(&self) -> &str {
+        &self.id
+    }
+
+    async fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn generate(&self, request: &Value) -> Result<ModelResponse, anyhow::Error> {
+        self.request("/v1/chat/completions", request).await
+    }
 
     async fn serialize(&self) -> Result<Vec<u8>, anyhow::Error> {
         Ok(serde_json::to_vec(self)?)
+    }
+
+    async fn invoke(
+        &self,
+        path: &str,
+        body: &Value,
+    ) -> Option<Result<ModelResponse, anyhow::Error>> {
+        Some(self.request(path, body).await)
     }
 }
 
@@ -187,6 +207,24 @@ impl Model for RetryingModel {
 
     async fn serialize(&self) -> Result<Vec<u8>, anyhow::Error> {
         self.parent.serialize().await
+    }
+
+    async fn invoke(&self, path: &str, body: &Value) -> Option<Result<ModelResponse, Error>> {
+        let mut i = 0;
+        while i < CONFIG.model_timeout / CONFIG.model_retry_interval {
+            match self.parent.invoke(path, body).await {
+                Some(Ok(res)) => {
+                    return Some(Ok(res));
+                }
+                Some(Err(err)) => {
+                    warn!("Retrying after error: {err}");
+                    sleep(Duration::from_secs(CONFIG.model_retry_interval.into())).await;
+                }
+                None => return None,
+            };
+            i += 1;
+        }
+        Some(Err(ModelError::RetriesExceeded().into()))
     }
 }
 

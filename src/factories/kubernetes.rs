@@ -195,21 +195,10 @@ impl KubernetesResolvingModel {
             api,
         })
     }
-}
 
-#[async_trait]
-impl Model for KubernetesResolvingModel {
-    async fn id(&self) -> &str {
-        &self.id
-    }
-
-    async fn name(&self) -> &str {
-        &self.name
-    }
-
-    async fn generate(&self, request: &Value) -> Result<ModelResponse, Error> {
+    async fn get_parent(&self) -> Result<&DynModel, anyhow::Error> {
         if let Some(parent) = self.parent.get() {
-            return parent.generate(request).await;
+            return Ok(parent);
         }
         let cr = self
             .api
@@ -224,15 +213,39 @@ impl Model for KubernetesResolvingModel {
         let _ = self.parent.set(HttpModel::new_dyn(
             self.id.clone(),
             self.name.clone(),
-            format!("http://{ip}/v1/chat/completions",).parse()?,
+            format!("http://{ip}",).parse()?,
             None,
         ));
 
-        self.generate(request).await
+        Ok(self.parent.get().unwrap())
+    }
+}
+
+#[async_trait]
+impl Model for KubernetesResolvingModel {
+    async fn id(&self) -> &str {
+        &self.id
+    }
+
+    async fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn generate(&self, request: &Value) -> Result<ModelResponse, Error> {
+        let parent = self.get_parent().await?;
+        parent.generate(request).await
     }
 
     async fn serialize(&self) -> Result<Vec<u8>, Error> {
         Ok(serde_json::to_vec(self)?)
+    }
+
+    async fn invoke(&self, path: &str, body: &Value) -> Option<Result<ModelResponse, Error>> {
+        let parent = match self.get_parent().await {
+            Ok(parent) => parent,
+            Err(e) => return Some(Err(e)),
+        };
+        parent.invoke(path, body).await
     }
 }
 

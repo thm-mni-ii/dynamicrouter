@@ -45,7 +45,8 @@ async fn async_main() {
 
     let app = Router::new()
         .route("/v1/chat/completions", post(routes::completions))
-        .route("/v1/models", get(routes::models));
+        .route("/v1/models", get(routes::models))
+        .route("/generate", post(routes::generate));
 
     let port = CONFIG.port;
 

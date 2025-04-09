@@ -12,7 +12,76 @@ pub async fn completions(
     headers: HeaderMap,
     body: Json<Value>,
 ) -> Result<ModelResponse, StatusCode> {
+    let model = get_model(&headers, &body).await?;
+    match model.generate(&body.0).await {
+        Ok(res) => Ok(res),
+        Err(err) => {
+            error!("Error while generating using model: {err:?}");
+            Err(StatusCode::BAD_GATEWAY)
+        }
+    }
+}
+
+pub async fn models(headers: HeaderMap) -> Result<Json<Value>, StatusCode> {
     let Some((username, _user)) = verify_authorization(&headers) else {
+        return Err(StatusCode::UNAUTHORIZED);
+    };
+
+    let models = CONFIG
+        .models
+        .iter()
+        .filter(|(name, model)| !model.hidden.unwrap_or(*name == "*"))
+        .filter(|(_, model)| match &model.limit_to_users {
+            Some(users) => users.contains(username),
+            None => true,
+        })
+        .map(|(key, model)| json!({"id": key, "name": model.name.as_ref().unwrap_or(key)}))
+        .collect::<Vec<Value>>();
+
+    Ok(Json(json!({
+        "data": models,
+    })))
+}
+
+pub async fn generate(
+    headers: HeaderMap,
+    mut body: Json<Value>,
+) -> Result<ModelResponse, StatusCode> {
+    let model = get_model(&headers, &body).await?;
+    body.0["model"].take();
+
+    match model.invoke("generate", &body.0).await {
+        Some(Ok(res)) => Ok(res),
+        Some(Err(err)) => {
+            error!("Error while generating using model: {err:?}");
+            Err(StatusCode::BAD_GATEWAY)
+        }
+        None => {
+            warn!("Backend does not support invoke");
+            Err(StatusCode::BAD_GATEWAY)
+        }
+    }
+}
+
+fn verify_authorization(headers: &HeaderMap) -> Option<(&String, &User)> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|header| header.to_str().ok())
+        .and_then(|header| header.strip_prefix("Bearer "))
+        .and_then(|token| {
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(token.as_bytes());
+            let hash = hasher.finalize();
+            let encoded = hex::encode(hash);
+            CONFIG
+                .users
+                .iter()
+                .find(|(_name, u)| u.token_hashes.contains(&encoded))
+        })
+}
+
+async fn get_model(headers: &HeaderMap, body: &Json<Value>) -> Result<DynModel, StatusCode> {
+    let Some((username, _user)) = verify_authorization(headers) else {
         return Err(StatusCode::UNAUTHORIZED);
     };
 
@@ -53,49 +122,5 @@ pub async fn completions(
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
-    match model.generate(&body.0).await {
-        Ok(res) => Ok(res),
-        Err(err) => {
-            error!("Error while generating using model: {err:?}");
-            Err(StatusCode::BAD_GATEWAY)
-        }
-    }
-}
-
-pub async fn models(headers: HeaderMap) -> Result<Json<Value>, StatusCode> {
-    let Some((username, _user)) = verify_authorization(&headers) else {
-        return Err(StatusCode::UNAUTHORIZED);
-    };
-
-    let models = CONFIG
-        .models
-        .iter()
-        .filter(|(name, model)| !model.hidden.unwrap_or(*name == "*"))
-        .filter(|(_, model)| match &model.limit_to_users {
-            Some(users) => users.contains(username),
-            None => true,
-        })
-        .map(|(key, model)| json!({"id": key, "name": model.name.as_ref().unwrap_or(key)}))
-        .collect::<Vec<Value>>();
-
-    Ok(Json(json!({
-        "data": models,
-    })))
-}
-
-fn verify_authorization(headers: &HeaderMap) -> Option<(&String, &User)> {
-    headers
-        .get(header::AUTHORIZATION)
-        .and_then(|header| header.to_str().ok())
-        .and_then(|header| header.strip_prefix("Bearer "))
-        .and_then(|token| {
-            let mut hasher = sha2::Sha256::new();
-            hasher.update(token.as_bytes());
-            let hash = hasher.finalize();
-            let encoded = hex::encode(hash);
-            CONFIG
-                .users
-                .iter()
-                .find(|(_name, u)| u.token_hashes.contains(&encoded))
-        })
+    Ok(model)
 }
