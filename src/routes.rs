@@ -2,17 +2,19 @@ use crate::config::{User, CONFIG};
 use crate::factories::models::{DynModel, ModelResponse, RetryingModel};
 use crate::factories::{get_factory, ModelFactory};
 use crate::utils::ModelRef;
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::extract::FromRequestParts;
+use axum::http::request::Parts;
+use axum::http::{header, StatusCode};
 use axum::Json;
 use log::{debug, error, warn};
 use serde_json::{json, Value};
 use sha2::Digest;
 
 pub async fn completions(
-    headers: HeaderMap,
+    authorization: Authorization<'_>,
     body: Json<Value>,
 ) -> Result<ModelResponse, StatusCode> {
-    let model = get_model(&headers, &body).await?;
+    let model = get_model(&authorization, &body).await?;
     match model.generate(&body.0).await {
         Ok(res) => Ok(res),
         Err(err) => {
@@ -22,17 +24,13 @@ pub async fn completions(
     }
 }
 
-pub async fn models(headers: HeaderMap) -> Result<Json<Value>, StatusCode> {
-    let Some((username, _user)) = verify_authorization(&headers) else {
-        return Err(StatusCode::UNAUTHORIZED);
-    };
-
+pub async fn models(authorization: Authorization<'_>) -> Result<Json<Value>, StatusCode> {
     let models = CONFIG
         .models
         .iter()
         .filter(|(name, model)| !model.hidden.unwrap_or(*name == "*"))
         .filter(|(_, model)| match &model.limit_to_users {
-            Some(users) => users.contains(username),
+            Some(users) => users.contains(authorization.username),
             None => true,
         })
         .map(|(key, model)| json!({"id": key, "name": model.name.as_ref().unwrap_or(key)}))
@@ -44,10 +42,10 @@ pub async fn models(headers: HeaderMap) -> Result<Json<Value>, StatusCode> {
 }
 
 pub async fn generate(
-    headers: HeaderMap,
+    authorization: Authorization<'_>,
     mut body: Json<Value>,
 ) -> Result<ModelResponse, StatusCode> {
-    let model = get_model(&headers, &body).await?;
+    let model = get_model(&authorization, &body).await?;
     body.0["model"].take();
 
     match model.invoke("generate", &body.0).await {
@@ -63,28 +61,40 @@ pub async fn generate(
     }
 }
 
-fn verify_authorization(headers: &HeaderMap) -> Option<(&String, &User)> {
-    headers
-        .get(header::AUTHORIZATION)
-        .and_then(|header| header.to_str().ok())
-        .and_then(|header| header.strip_prefix("Bearer "))
-        .and_then(|token| {
-            let mut hasher = sha2::Sha256::new();
-            hasher.update(token.as_bytes());
-            let hash = hasher.finalize();
-            let encoded = hex::encode(hash);
-            CONFIG
-                .users
-                .iter()
-                .find(|(_name, u)| u.token_hashes.contains(&encoded))
-        })
+#[allow(dead_code)]
+pub struct Authorization<'a> {
+    username: &'a String,
+    user: &'a User,
 }
 
-async fn get_model(headers: &HeaderMap, body: &Json<Value>) -> Result<DynModel, StatusCode> {
-    let Some((username, _user)) = verify_authorization(headers) else {
-        return Err(StatusCode::UNAUTHORIZED);
-    };
+impl<S: Send + Sync> FromRequestParts<S> for Authorization<'_> {
+    type Rejection = StatusCode;
 
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        parts
+            .headers
+            .get(header::AUTHORIZATION)
+            .and_then(|header| header.to_str().ok())
+            .and_then(|header| header.strip_prefix("Bearer "))
+            .and_then(|token| {
+                let mut hasher = sha2::Sha256::new();
+                hasher.update(token.as_bytes());
+                let hash = hasher.finalize();
+                let encoded = hex::encode(hash);
+                CONFIG
+                    .users
+                    .iter()
+                    .find(|(_name, u)| u.token_hashes.contains(&encoded))
+            })
+            .map(|(username, user)| Authorization { username, user })
+            .ok_or(StatusCode::UNAUTHORIZED)
+    }
+}
+
+async fn get_model(
+    authorization: &Authorization<'_>,
+    body: &Json<Value>,
+) -> Result<DynModel, StatusCode> {
     let Some(model) = body
         .get("model")
         .and_then(|v| v.as_str())
@@ -106,8 +116,8 @@ async fn get_model(headers: &HeaderMap, body: &Json<Value>) -> Result<DynModel, 
         .or_else(|| CONFIG.models.get("*"))
     {
         if let Some(limited) = &model_conf.limit_to_users {
-            if !limited.contains(username) {
-                warn!("{username} is not allowed to use {model}");
+            if !limited.contains(authorization.username) {
+                warn!("{} is not allowed to use {model}", authorization.username);
                 return Err(StatusCode::FORBIDDEN);
             }
         }

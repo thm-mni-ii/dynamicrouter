@@ -97,6 +97,7 @@ static OK_STATUS_CODES: Lazy<HashSet<StatusCode>> = Lazy::new(|| {
         StatusCode::OK,
         StatusCode::BAD_REQUEST,
         StatusCode::UNPROCESSABLE_ENTITY,
+        StatusCode::INTERNAL_SERVER_ERROR,
     ])
 });
 
