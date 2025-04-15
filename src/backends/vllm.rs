@@ -1,20 +1,26 @@
-use crate::backends::Backend;
+use crate::backends::{common, Backend};
 use crate::config::BackendImageConf;
 use crate::utils::{ModelRef, QuantType};
+use std::collections::HashMap;
 
 pub struct VllmBackend {
+    id: String,
     image: String,
 }
 
 impl From<&BackendImageConf> for VllmBackend {
     fn from(value: &BackendImageConf) -> Self {
         VllmBackend {
+            id: value.id.clone().unwrap_or_else(|| "llama_cpp".to_string()),
             image: value.image.clone(),
         }
     }
 }
 
 impl Backend for VllmBackend {
+    fn get_id(&self) -> String {
+        self.id.clone()
+    }
     fn get_image(&self) -> String {
         self.image.clone()
     }
@@ -95,5 +101,9 @@ impl Backend for VllmBackend {
 
     fn get_mount(&self, _model: &ModelRef) -> (String, String) {
         ("models".to_string(), "/models".to_string())
+    }
+
+    fn get_environment(&self) -> HashMap<String, String> {
+        common::get_environment()
     }
 }

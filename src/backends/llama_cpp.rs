@@ -1,20 +1,27 @@
-use crate::backends::Backend;
+use crate::backends::{common, Backend};
 use crate::config::BackendImageConf;
 use crate::utils::{ModelRef, QuantType};
+use std::collections::HashMap;
 
 pub struct LlamaCppBackend {
+    id: String,
     image: String,
 }
 
 impl From<&BackendImageConf> for LlamaCppBackend {
     fn from(value: &BackendImageConf) -> Self {
         LlamaCppBackend {
+            id: value.id.clone().unwrap_or_else(|| "llama_cpp".to_string()),
             image: value.image.clone(),
         }
     }
 }
 
 impl Backend for LlamaCppBackend {
+    fn get_id(&self) -> String {
+        self.id.clone()
+    }
+
     fn get_image(&self) -> String {
         self.image.clone()
     }
@@ -50,5 +57,9 @@ impl Backend for LlamaCppBackend {
             "llama.cpp".to_string(),
             "/root/.cache/llama.cpp/".to_string(),
         )
+    }
+
+    fn get_environment(&self) -> HashMap<String, String> {
+        common::get_environment()
     }
 }

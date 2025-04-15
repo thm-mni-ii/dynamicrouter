@@ -46,6 +46,7 @@ pub struct Model {
     pub timeout: Option<u32>,
     pub limit_to_users: Option<HashSet<String>>,
     pub hidden: Option<bool>,
+    pub backends: HashSet<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -218,6 +219,7 @@ pub enum BackendConf {
 #[derive(Deserialize, Debug)]
 pub struct BackendImageConf {
     pub image: String,
+    pub id: Option<String>,
 }
 
 pub static CONFIG: Lazy<Conf> = Lazy::new(|| {

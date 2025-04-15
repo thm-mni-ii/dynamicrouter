@@ -9,7 +9,6 @@ use k8s_openapi::api::core::v1::Pod;
 use kube::api::{DeleteParams, PostParams};
 use kube::{Api, Client};
 use log::{debug, info};
-use secrecy::ExposeSecret;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -82,13 +81,13 @@ impl ModelFactory for KubernetesModelFactory {
         info!("Using {gpu_count} x {gpu_id} for {model}");
         let id = hex::encode(rand::random::<[u8; 8]>());
 
-        let mut env = json!([{"name": "HF_HOME", "value": "/models"}]);
+        let backend = get_first_supported_backend(&model)?;
 
-        if let Some(token) = &CONFIG.huggingface.token {
-            env.as_array_mut()
-                .unwrap()
-                .push(json!({"name": "HF_TOKEN", "value": token.expose_secret()}));
-        }
+        let env = backend
+            .get_environment()
+            .into_iter()
+            .map(|(key, value)| json!({"name": key, "value": value}))
+            .collect::<Value>();
 
         let mut node_selector = json!({
             "nvidia.com/gpu.product": gpu_id
@@ -101,7 +100,6 @@ impl ModelFactory for KubernetesModelFactory {
             }
         }
 
-        let backend = get_first_supported_backend(&model)?;
         let (sub_path, mount_path) = backend.get_mount(&model);
 
         self.pod_api.create(

@@ -78,7 +78,13 @@ impl ModelFactory for RunpodModelFactory {
 
         let backend = get_first_supported_backend(&model)?;
 
-        let mut input = json!({
+        let env = backend
+            .get_environment()
+            .into_iter()
+            .map(|(key, value)| json!({"key": key, "value": value}))
+            .collect::<Value>();
+
+        let input = json!({
             "cloudType":"SECURE",
             "containerDiskInGb": model_sizes.storage.factor(config.disk_storage_margin_factor).to_gibibytes().ceil() as u64,
             "volumeInGb":0,
@@ -88,14 +94,9 @@ impl ModelFactory for RunpodModelFactory {
             "templateId": config.template_id,
             "imageName": backend.get_image(),
             "ports":"80/http",
-            "dockerArgs": backend.get_args(&model).join(" ")
+            "dockerArgs": backend.get_args(&model).join(" "),
+            "env": env,
         });
-        if let Some(token) = &CONFIG.huggingface.token {
-            input.as_object_mut().unwrap().insert(
-                "env".to_string(),
-                json!([{"key": "HF_TOKEN", "value": token.expose_secret()}]),
-            );
-        }
 
         let body = json!({"query": RUNPOD_CREATE_MUTATION, "operationName": "Mutation", "variables": {"input": input}});
         debug!("Sending {body:?} to runpod");
