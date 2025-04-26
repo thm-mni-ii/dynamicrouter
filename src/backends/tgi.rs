@@ -11,7 +11,7 @@ pub struct TgiBackend {
 impl From<&BackendImageConf> for TgiBackend {
     fn from(value: &BackendImageConf) -> Self {
         TgiBackend {
-            id: value.id.clone().unwrap_or_else(|| "llama_cpp".to_string()),
+            id: value.id.clone().unwrap_or_else(|| "text_generation_inference".to_string()),
             image: value.image.clone(),
         }
     }

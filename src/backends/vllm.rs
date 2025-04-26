@@ -11,7 +11,7 @@ pub struct VllmBackend {
 impl From<&BackendImageConf> for VllmBackend {
     fn from(value: &BackendImageConf) -> Self {
         VllmBackend {
-            id: value.id.clone().unwrap_or_else(|| "llama_cpp".to_string()),
+            id: value.id.clone().unwrap_or_else(|| "vllm".to_string()),
             image: value.image.clone(),
         }
     }
