@@ -11,6 +11,7 @@ use crate::utils::ModelRef;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Arc;
+use log::debug;
 
 pub type DynBackend = Arc<dyn Backend>;
 
@@ -39,15 +40,16 @@ pub fn get_first_supported_backend(model: &ModelRef) -> Result<DynBackend, Backe
     let per_model_backends = CONFIG
         .models
         .get(&model.to_string())
-        .map(|model| &model.backends);
+        .and_then(|model| model.backends.as_ref());
 
-    BACKEND
-        .iter()
-        .filter(|backend| match &per_model_backends {
-            None => true,
-            Some(backends) => backends.contains(&backend.get_id()),
-        })
-        .find(|backend| backend.is_supported(model))
+    let mut backend_iter: Box<dyn Iterator<Item=&DynBackend>> = Box::new(BACKEND.iter());
+
+    if let Some(per_model_backends) = per_model_backends {
+        debug!("{model} limits backends to {per_model_backends:?}");
+        backend_iter = Box::new(backend_iter.filter(|backend| per_model_backends.contains(&backend.get_id())));
+    }
+
+    backend_iter.find(|backend| backend.is_supported(model))
         .cloned()
         .ok_or(BackendError::NoSupportedBackedFound())
 }

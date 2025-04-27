@@ -73,15 +73,14 @@ impl ModelFactory for KubernetesModelFactory {
 
         let model_sizes = ModelSizes::get(&model).await?;
 
+        let backend = get_first_supported_backend(&model)?;
         let (gpu_id, gpu_count) = calculate_needed_gpu(
             &config,
             &model,
             model_sizes.gpu.factor(config.gpu_memory_margin_factor),
         )?;
-        info!("Using {gpu_count} x {gpu_id} for {model}");
+        info!("Using {gpu_count} x {gpu_id} on backend {} for {model}", backend.get_id());
         let id = hex::encode(rand::random::<[u8; 8]>());
-
-        let backend = get_first_supported_backend(&model)?;
 
         let env = backend
             .get_environment()
