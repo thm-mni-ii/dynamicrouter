@@ -30,7 +30,7 @@ impl Backend for LlamaCppBackend {
         matches!(model.get_quant(), QuantType::Gguf(_))
     }
 
-    fn get_args(&self, model: &ModelRef) -> Vec<String> {
+    fn get_args(&self, model: &ModelRef, _gpu_count: u8) -> Vec<String> {
         let mut args = vec![
             "--no-webui".to_string(),
             "--port".to_string(),

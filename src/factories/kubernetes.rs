@@ -114,7 +114,7 @@ impl ModelFactory for KubernetesModelFactory {
             "name": "inference",
             "image": backend.get_image(),
             "command": backend.get_entrypoint(&model),
-            "args": backend.get_args(&model),
+            "args": backend.get_args(&model, gpu_count),
             "volumeMounts": [
                 {"name": "models", "subPath": sub_path, "mountPath": mount_path}
             ],

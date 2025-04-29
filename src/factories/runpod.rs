@@ -94,7 +94,7 @@ impl ModelFactory for RunpodModelFactory {
             "templateId": config.template_id,
             "imageName": backend.get_image(),
             "ports":"80/http",
-            "dockerArgs": backend.get_args(&model).join(" "),
+            "dockerArgs": backend.get_args(&model, gpu_count).join(" "),
             "env": env,
         });
 

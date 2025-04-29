@@ -149,7 +149,7 @@ impl ModelFactory for PersistentModelFactory {
         } else {
             let new_model = self.parent.create(model).await?;
             let model_id = new_model.id().await;
-            info!("Created instance {} for {}", model_id, model_ref);
+            info!("Created instance {model_id} for {model_ref}");
             let model_dump = self.parent.dump(&new_model).await?;
 
             query!("INSERT INTO instance (id, model, data, last_request) VALUES (?, ?, ?, unixepoch())", model_id, model_ref, model_dump).fetch_optional(get_executor()).await?;

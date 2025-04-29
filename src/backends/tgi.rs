@@ -33,7 +33,7 @@ impl Backend for TgiBackend {
         }
     }
 
-    fn get_args(&self, model: &ModelRef) -> Vec<String> {
+    fn get_args(&self, model: &ModelRef, _gpu_count: u8) -> Vec<String> {
         let mut args = Vec::new();
         args.append(&mut vec!["--model-id".to_string(), model.get_hf_id()]);
 

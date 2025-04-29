@@ -35,8 +35,8 @@ impl Backend for VllmBackend {
         }
     }
 
-    fn get_args(&self, model: &ModelRef) -> Vec<String> {
-        let mut args = Vec::new();
+    fn get_args(&self, model: &ModelRef, gpu_count: u8) -> Vec<String> {
+        let mut args = vec!["--port".to_string(), "80".to_string(), "--tensor-parallel-size".to_string(), gpu_count.to_string()];
         if let QuantType::Gguf(_) = model.get_quant() {
             args.append(&mut vec![
                 "export".to_string(),
