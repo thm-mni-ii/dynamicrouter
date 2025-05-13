@@ -52,6 +52,7 @@ pub struct Model {
 #[derive(Deserialize, Debug)]
 pub struct User {
     pub token_hashes: HashSet<String>,
+    pub limit_to_models: Option<HashSet<String>>,
 }
 
 #[derive(Deserialize, Debug)]

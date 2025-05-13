@@ -33,6 +33,7 @@ pub async fn models(authorization: Authorization<'_>) -> Result<Json<Value>, Sta
             Some(users) => users.contains(authorization.username),
             None => true,
         })
+        .filter(|(name, _model)| authorization.user.limit_to_models.as_ref().is_none_or(|limit_to| limit_to.contains(*name)))
         .map(|(key, model)| json!({"id": key, "name": model.name.as_ref().unwrap_or(key)}))
         .collect::<Vec<Value>>();
 
@@ -115,11 +116,9 @@ async fn get_model(
         .get(&model.to_string())
         .or_else(|| CONFIG.models.get("*"))
     {
-        if let Some(limited) = &model_conf.limit_to_users {
-            if !limited.contains(authorization.username) {
-                warn!("{} is not allowed to use {model}", authorization.username);
-                return Err(StatusCode::FORBIDDEN);
-            }
+        if !(model_conf.limit_to_users.as_ref().is_none_or(|limited| limited.contains(authorization.username)) && authorization.user.limit_to_models.as_ref().is_none_or(|limited| limited.contains(&model.to_string()))) {
+            warn!("{} is not allowed to use {model}", authorization.username);
+            return Err(StatusCode::FORBIDDEN);
         }
     } else {
         return Err(StatusCode::NOT_FOUND);
