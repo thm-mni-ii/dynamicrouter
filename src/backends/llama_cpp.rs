@@ -1,18 +1,20 @@
 use crate::backends::{common, Backend};
-use crate::config::BackendImageConf;
+use crate::config::LlamaCppConf;
 use crate::utils::{ModelRef, QuantType};
 use std::collections::HashMap;
 
 pub struct LlamaCppBackend {
     id: String,
     image: String,
+    ctx_length: Option<u64>,
 }
 
-impl From<&BackendImageConf> for LlamaCppBackend {
-    fn from(value: &BackendImageConf) -> Self {
+impl From<&LlamaCppConf> for LlamaCppBackend {
+    fn from(value: &LlamaCppConf) -> Self {
         LlamaCppBackend {
             id: value.id.clone().unwrap_or_else(|| "llama_cpp".to_string()),
             image: value.image.clone(),
+            ctx_length: value.ctx_length,
         }
     }
 }
@@ -40,6 +42,10 @@ impl Backend for LlamaCppBackend {
             "--hf-repo".to_string(),
             model.get_hf_id(),
         ];
+        
+        if let Some(ctx_length) = self.ctx_length {
+            args.append(&mut vec!["--ctx-size".to_string(), ctx_length.to_string()]);
+        }
 
         if let Some(path) = &model.path {
             args.append(&mut vec!["--hf-file".to_string(), path.clone()]);

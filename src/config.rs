@@ -214,13 +214,20 @@ pub enum BackendConf {
     #[serde(rename = "vllm")]
     Vllm(BackendImageConf),
     #[serde(rename = "llama_cpp")]
-    LlamaCpp(BackendImageConf),
+    LlamaCpp(LlamaCppConf),
 }
 
 #[derive(Deserialize, Debug)]
 pub struct BackendImageConf {
     pub image: String,
     pub id: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct LlamaCppConf {
+    pub image: String,
+    pub id: Option<String>,
+    pub ctx_length: Option<u64>,
 }
 
 pub static CONFIG: Lazy<Conf> = Lazy::new(|| {
