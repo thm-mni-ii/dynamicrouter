@@ -1,5 +1,5 @@
-use crate::backends::{common, Backend};
 use crate::config::BackendImageConf;
+use crate::handlers::spawner::backends::{common, Backend};
 use crate::utils::{ModelRef, QuantType};
 use std::collections::HashMap;
 
@@ -36,7 +36,12 @@ impl Backend for VllmBackend {
     }
 
     fn get_args(&self, model: &ModelRef, gpu_count: u8) -> Vec<String> {
-        let mut args = vec!["--port".to_string(), "80".to_string(), "--tensor-parallel-size".to_string(), gpu_count.to_string()];
+        let mut args = vec![
+            "--port".to_string(),
+            "80".to_string(),
+            "--tensor-parallel-size".to_string(),
+            gpu_count.to_string(),
+        ];
         if let QuantType::Gguf(_) = model.get_quant() {
             args.append(&mut vec![
                 "export".to_string(),

@@ -1,3 +1,6 @@
+#![allow(unreachable_patterns)]
+
+use crate::utils::ModelRef;
 use config::Config;
 use log::error;
 use once_cell::sync::Lazy;
@@ -20,6 +23,23 @@ fn default_disk_storage_margin_factor() -> f64 {
 }
 fn default_aliases() -> HashMap<String, Alias> {
     HashMap::new()
+}
+fn default_handler() -> Handler {
+    Handler::Spawner(SpawnerModelHandlerConfig {
+        backends: None,
+        min_scale: default_min_scale(),
+        max_scale: default_max_scale(),
+        queue_length_for_scale_up: default_queue_length_for_scale_up(),
+    })
+}
+fn default_min_scale() -> u32 {
+    0
+}
+fn default_max_scale() -> u32 {
+    1
+}
+fn default_queue_length_for_scale_up() -> u32 {
+    1
 }
 
 #[derive(Deserialize, Debug)]
@@ -46,7 +66,34 @@ pub struct Model {
     pub timeout: Option<u32>,
     pub limit_to_users: Option<HashSet<String>>,
     pub hidden: Option<bool>,
+    #[serde(default = "default_handler")]
+    pub handler: Handler,
+}
+
+#[derive(Deserialize, Debug)]
+pub enum Handler {
+    #[serde(rename = "spawner")]
+    Spawner(SpawnerModelHandlerConfig),
+}
+
+#[derive(Deserialize, Debug)]
+pub struct SpawnerModelHandlerConfig {
     pub backends: Option<HashSet<String>>,
+    #[serde(default = "default_min_scale")]
+    pub min_scale: u32,
+    #[serde(default = "default_max_scale")]
+    pub max_scale: u32,
+    #[serde(default = "default_queue_length_for_scale_up")]
+    pub queue_length_for_scale_up: u32,
+}
+
+impl Handler {
+    pub fn as_spawner(&self) -> &SpawnerModelHandlerConfig {
+        match self {
+            Handler::Spawner(conf) => conf,
+            _ => panic!("model handler config is not spawner"),
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -79,13 +126,13 @@ impl FactoryConf {
     pub fn as_runpod(&self) -> &RunpodConf {
         match self {
             FactoryConf::Runpod(conf) => conf,
-            FactoryConf::Kubernetes(_) => panic!("factory is not runpod"),
+            _ => panic!("factory is not runpod"),
         }
     }
     pub fn as_kubernetes(&self) -> &KubernetesConf {
         match self {
             FactoryConf::Kubernetes(conf) => conf,
-            FactoryConf::Runpod(_) => panic!("factory is not kubernetes"),
+            _ => panic!("factory is not kubernetes"),
         }
     }
 }
@@ -242,6 +289,26 @@ pub static CONFIG: Lazy<Conf> = Lazy::new(|| {
         exit(1)
     })
 });
+
+pub fn get_model_config(model: &ModelRef) -> Result<&'static Model, ModelNotFoundError> {
+    get_model_config_by_name(&model.to_string())
+}
+
+pub fn get_model_config_by_name(model: &str) -> Result<&'static Model, ModelNotFoundError> {
+    CONFIG
+        .models
+        .get(model)
+        .or_else(|| CONFIG.models.get("*"))
+        .ok_or_else(|| ModelNotFoundError {
+            id: model.to_string(),
+        })
+}
+
+#[derive(thiserror::Error, Debug)]
+#[error("model {id} not found")]
+pub struct ModelNotFoundError {
+    id: String,
+}
 
 #[derive(Deserialize, Debug)]
 pub struct Alias {

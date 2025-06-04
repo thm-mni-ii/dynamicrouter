@@ -1,5 +1,5 @@
-use crate::backends::{common, Backend};
 use crate::config::BackendImageConf;
+use crate::handlers::spawner::backends::{common, Backend};
 use crate::utils::{ModelRef, QuantType};
 use std::collections::HashMap;
 
@@ -11,7 +11,10 @@ pub struct TgiBackend {
 impl From<&BackendImageConf> for TgiBackend {
     fn from(value: &BackendImageConf) -> Self {
         TgiBackend {
-            id: value.id.clone().unwrap_or_else(|| "text_generation_inference".to_string()),
+            id: value
+                .id
+                .clone()
+                .unwrap_or_else(|| "text_generation_inference".to_string()),
             image: value.image.clone(),
         }
     }

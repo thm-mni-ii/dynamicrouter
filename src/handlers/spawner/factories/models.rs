@@ -1,9 +1,7 @@
 use crate::config::CONFIG;
+use crate::utils::response::ModelResponse;
 use anyhow::Error;
 use async_trait::async_trait;
-use axum::body::Body;
-use axum::http::header;
-use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use futures_util::StreamExt;
 use log::warn;
@@ -18,32 +16,6 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::sleep;
-
-type ModelStream =
-    Box<dyn futures_core::Stream<Item = Result<Bytes, anyhow::Error>> + Send + Unpin>;
-
-pub struct ModelResponse {
-    pub status: StatusCode,
-    pub content_type: Option<String>,
-    pub content_length: Option<u64>,
-    pub body: ModelStream,
-}
-
-impl IntoResponse for ModelResponse {
-    fn into_response(self) -> Response {
-        let mut builder = Response::builder().status(self.status);
-        builder = match self.content_type {
-            Some(ct) => builder.header(header::CONTENT_TYPE, ct),
-            None => builder,
-        };
-        builder = match self.content_length {
-            Some(cl) => builder.header(header::CONTENT_LENGTH, cl),
-            None => builder,
-        };
-
-        builder.body(Body::from_stream(self.body)).unwrap()
-    }
-}
 
 struct StreamAdapter<P: futures_core::Stream<Item = Result<Bytes, reqwest::Error>> + Send + Unpin> {
     parent: P,

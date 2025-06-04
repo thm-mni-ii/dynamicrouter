@@ -1,7 +1,7 @@
-use crate::backends::get_first_supported_backend;
 use crate::config::{RunpodConf, RunpodGpu, CONFIG};
-use crate::factories::models::{DynModel, HttpModel};
-use crate::factories::ModelFactory;
+use crate::handlers::spawner::backends::get_first_supported_backend;
+use crate::handlers::spawner::factories::models::{DynModel, HttpModel};
+use crate::handlers::spawner::factories::ModelFactory;
 use crate::utils::{ByteSize, ModelRef, ModelSizes};
 use log::{debug, info};
 use once_cell::sync::Lazy;
@@ -64,19 +64,19 @@ fn calculate_needed_gpu(
 
 #[async_trait::async_trait]
 impl ModelFactory for RunpodModelFactory {
-    async fn create(&self, model: ModelRef) -> Result<DynModel, anyhow::Error> {
+    async fn create(&self, model: &ModelRef) -> Result<DynModel, anyhow::Error> {
         let config = CONFIG.factory.as_runpod().get_for_model(&model.to_string());
-        let model_sizes = ModelSizes::get(&model).await?;
+        let model_sizes = ModelSizes::get(model).await?;
 
         let (gpu_id, gpu_count) = calculate_needed_gpu(
             &config,
-            &model,
+            model,
             model_sizes.gpu.factor(config.gpu_memory_margin_factor),
         )?;
 
         info!("Using {gpu_count} x {gpu_id} for {model}");
 
-        let backend = get_first_supported_backend(&model)?;
+        let backend = get_first_supported_backend(model)?;
 
         let env = backend
             .get_environment()
@@ -94,7 +94,7 @@ impl ModelFactory for RunpodModelFactory {
             "templateId": config.template_id,
             "imageName": backend.get_image(),
             "ports":"80/http",
-            "dockerArgs": backend.get_args(&model, gpu_count).join(" "),
+            "dockerArgs": backend.get_args(model, gpu_count).join(" "),
             "env": env,
         });
 

@@ -1,4 +1,6 @@
 pub mod huggingface;
+pub mod logging;
+pub mod response;
 
 use crate::utils::huggingface::HfModel;
 use once_cell::sync::Lazy;

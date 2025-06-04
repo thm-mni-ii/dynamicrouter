@@ -1,7 +1,8 @@
-use crate::backends::get_first_supported_backend;
 use crate::config::{KubernetesConf, KubernetesGpu, CONFIG};
-use crate::factories::models::{DynModel, HttpModel, Model, ModelResponse};
-use crate::factories::ModelFactory;
+use crate::handlers::spawner::backends::get_first_supported_backend;
+use crate::handlers::spawner::factories::models::{DynModel, HttpModel, Model};
+use crate::handlers::spawner::factories::ModelFactory;
+use crate::utils::response::ModelResponse;
 use crate::utils::{ByteSize, ModelRef, ModelSizes};
 use anyhow::Error;
 use async_trait::async_trait;
@@ -65,21 +66,24 @@ fn calculate_needed_gpu(
 
 #[async_trait]
 impl ModelFactory for KubernetesModelFactory {
-    async fn create(&self, model: ModelRef) -> Result<DynModel, anyhow::Error> {
+    async fn create(&self, model: &ModelRef) -> Result<DynModel, anyhow::Error> {
         let config = CONFIG
             .factory
             .as_kubernetes()
             .get_for_model(&model.to_string());
 
-        let model_sizes = ModelSizes::get(&model).await?;
+        let model_sizes = ModelSizes::get(model).await?;
 
-        let backend = get_first_supported_backend(&model)?;
+        let backend = get_first_supported_backend(model)?;
         let (gpu_id, gpu_count) = calculate_needed_gpu(
             &config,
-            &model,
+            model,
             model_sizes.gpu.factor(config.gpu_memory_margin_factor),
         )?;
-        info!("Using {gpu_count} x {gpu_id} on backend {} for {model}", backend.get_id());
+        info!(
+            "Using {gpu_count} x {gpu_id} on backend {} for {model}",
+            backend.get_id()
+        );
         let id = hex::encode(rand::random::<[u8; 8]>());
 
         let env = backend
@@ -99,7 +103,7 @@ impl ModelFactory for KubernetesModelFactory {
             }
         }
 
-        let (sub_path, mount_path) = backend.get_mount(&model);
+        let (sub_path, mount_path) = backend.get_mount(model);
 
         self.pod_api.create(
             &PostParams::default(),
@@ -113,8 +117,8 @@ impl ModelFactory for KubernetesModelFactory {
         "containers": [{
             "name": "inference",
             "image": backend.get_image(),
-            "command": backend.get_entrypoint(&model),
-            "args": backend.get_args(&model, gpu_count),
+            "command": backend.get_entrypoint(model),
+            "args": backend.get_args(model, gpu_count),
             "volumeMounts": [
                 {"name": "models", "subPath": sub_path, "mountPath": mount_path}
             ],

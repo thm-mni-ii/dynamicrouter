@@ -6,21 +6,20 @@
 #![allow(clippy::enum_variant_names)]
 #![allow(clippy::match_wildcard_for_single_variants)]
 
-mod backends;
 mod config;
 mod db;
-mod factories;
+mod handlers;
 mod routes;
 mod runtime;
 mod utils;
 
 use crate::config::{TlsConfig, CONFIG};
-use crate::factories::init_factories;
+use crate::handlers::init_handlers;
 use crate::runtime::RUNTIME;
 use axum::routing::{get, post};
 use axum::Router;
 use axum_server::tls_rustls::RustlsConfig;
-use db::init_db;
+use db::connection::init_db;
 use log::{debug, error, info, LevelFilter};
 use rustls::crypto::ring;
 use std::process::exit;
@@ -41,12 +40,11 @@ async fn async_main() {
 
     ring::default_provider().install_default().unwrap();
     init_db().await;
-    init_factories().await;
+    init_handlers().await;
 
     let app = Router::new()
         .route("/v1/chat/completions", post(routes::completions))
-        .route("/v1/models", get(routes::models))
-        .route("/generate", post(routes::generate));
+        .route("/v1/models", get(routes::models));
 
     let port = CONFIG.port;
 
