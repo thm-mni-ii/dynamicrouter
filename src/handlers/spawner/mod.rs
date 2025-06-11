@@ -1,8 +1,7 @@
 use crate::config::{get_model_config_by_name, FactoryConf, CONFIG};
 use crate::db::instance::{create_instance, delete_instance, get_instances_for, Instance};
 use crate::db::request::{
-    count_pending_requests_for, create_request, latest_for_each_model,
-    request_done,
+    count_pending_requests_for, create_request, latest_for_each_model, request_done,
 };
 use crate::fatal;
 use crate::handlers::spawner::factories::kubernetes::KubernetesModelFactory;
@@ -110,7 +109,7 @@ impl Handler for SpawnerHandler {
 
         let mut dyn_model = None;
         while instance_count < handler_config.min_scale
-            || (request_count > handler_config.queue_length_for_scale_up
+            || ((request_count > handler_config.queue_length_for_scale_up || instance_count == 0)
                 && instance_count < handler_config.max_scale)
         {
             let new_dyn_model = self.model_factory.create(model).await?;

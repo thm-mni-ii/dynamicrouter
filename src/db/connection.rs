@@ -1,23 +1,22 @@
 use crate::config::CONFIG;
+use crate::fatal;
 use once_cell::sync::OnceCell;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{Pool, Sqlite};
-use crate::fatal;
 
 pub static DB: OnceCell<Db> = OnceCell::new();
 
 pub async fn init_db() {
     match Db::connect().await {
         Ok(db) => {
-            if let Err(err) = sqlx::migrate!()
-                .run(&db.executor)
-                .await {
+            if let Err(err) = sqlx::migrate!().run(&db.executor).await {
                 fatal!("Error while running migrations: {err}");
             }
-            if let Ok(()) = DB.set(db) {} else {
+            if let Ok(()) = DB.set(db) {
+            } else {
                 fatal!("init_db should only be called once");
             }
-        },
+        }
         Err(err) => {
             fatal!("Error while connection to database: {err}");
         }
