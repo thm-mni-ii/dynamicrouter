@@ -34,7 +34,10 @@ impl Backend for LlamaCppBackend {
 
     fn get_args(&self, model: &ModelRef, _gpu_count: u8) -> Vec<String> {
         let mut args = vec![
+            "-s".to_string(),
             "--no-webui".to_string(),
+            "--host".to_string(),
+            "0.0.0.0".to_string(),
             "--port".to_string(),
             "80".to_string(),
             "--n-gpu-layers".to_string(),

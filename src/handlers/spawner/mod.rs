@@ -70,7 +70,7 @@ impl SpawnerHandler {
                 .or_else(|| CONFIG.models.get("*"))
                 .and_then(|model| model.timeout)
                 .unwrap_or(CONFIG.model_timeout);
-            if item.done.is_some() || item.enqueue + i64::from(timeout) > Utc::now().timestamp() {
+            if item.done.is_none() || item.enqueue + i64::from(timeout) > Utc::now().timestamp() {
                 continue;
             }
             let instances = get_instances_for(&item.model).await?;
