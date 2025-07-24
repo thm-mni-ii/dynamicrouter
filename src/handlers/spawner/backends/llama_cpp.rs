@@ -41,7 +41,7 @@ impl Backend for LlamaCppBackend {
             "--port".to_string(),
             "80".to_string(),
             "--n-gpu-layers".to_string(),
-            "99".to_string(),
+            "999".to_string(),
             "--hf-repo".to_string(),
             model.get_hf_id(),
         ];
