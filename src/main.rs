@@ -13,14 +13,14 @@ mod routes;
 mod runtime;
 mod utils;
 
-use crate::config::{TlsConfig, CONFIG};
+use crate::config::{CONFIG, TlsConfig};
 use crate::handlers::init_handlers;
 use crate::runtime::RUNTIME;
-use axum::routing::{get, post};
 use axum::Router;
+use axum::routing::{get, post};
 use axum_server::tls_rustls::RustlsConfig;
 use db::connection::init_db;
-use log::{debug, error, info, LevelFilter};
+use log::{LevelFilter, debug, error, info};
 use rustls::crypto::ring;
 use std::process::exit;
 use std::time::Duration;

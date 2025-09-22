@@ -1,7 +1,7 @@
-use crate::config::{KubernetesConf, KubernetesGpu, CONFIG};
+use crate::config::{CONFIG, KubernetesConf, KubernetesGpu};
 use crate::handlers::spawner::backends::get_first_supported_backend;
-use crate::handlers::spawner::factories::models::{DynModel, HttpModel, Model};
 use crate::handlers::spawner::factories::ModelFactory;
+use crate::handlers::spawner::factories::models::{DynModel, HttpModel, Model};
 use crate::utils::response::ModelResponse;
 use crate::utils::{ByteSize, ModelRef, ModelSizes};
 use anyhow::Error;
@@ -11,7 +11,7 @@ use kube::api::{DeleteParams, PostParams};
 use kube::{Api, Client};
 use log::{debug, info};
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::OnceCell;

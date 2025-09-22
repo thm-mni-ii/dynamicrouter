@@ -1,13 +1,13 @@
-use crate::config::{User, CONFIG};
-use crate::handlers::{get_handler, Handler};
-use crate::utils::response::ModelResponse;
+use crate::config::{CONFIG, User};
+use crate::handlers::{Handler, get_handler};
 use crate::utils::ModelRef;
+use crate::utils::response::ModelResponse;
+use axum::Json;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use axum::http::{header, StatusCode};
-use axum::Json;
+use axum::http::{StatusCode, header};
 use log::{debug, error, warn};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::Digest;
 
 pub async fn completions(

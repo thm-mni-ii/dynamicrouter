@@ -1,13 +1,13 @@
-use crate::config::{RunpodConf, RunpodGpu, CONFIG};
+use crate::config::{CONFIG, RunpodConf, RunpodGpu};
 use crate::handlers::spawner::backends::get_first_supported_backend;
-use crate::handlers::spawner::factories::models::{DynModel, HttpModel};
 use crate::handlers::spawner::factories::ModelFactory;
+use crate::handlers::spawner::factories::models::{DynModel, HttpModel};
 use crate::utils::{ByteSize, ModelRef, ModelSizes};
 use log::{debug, info};
 use once_cell::sync::Lazy;
 use reqwest::{Client, Url};
 use secrecy::ExposeSecret;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fmt::Debug;
 use thiserror::Error;
 

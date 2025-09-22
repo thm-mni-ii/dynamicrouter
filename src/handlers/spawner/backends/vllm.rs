@@ -1,5 +1,5 @@
 use crate::config::BackendImageConf;
-use crate::handlers::spawner::backends::{common, Backend};
+use crate::handlers::spawner::backends::{Backend, common};
 use crate::utils::{ModelRef, QuantType};
 use std::collections::HashMap;
 
@@ -89,7 +89,7 @@ impl Backend for VllmBackend {
             }
             QuantType::FP16 => {}
             qt => panic!("quant type {qt:?} not supported by this backends."),
-        };
+        }
 
         match model.get_quant() {
             QuantType::Gguf(_) => vec!["-c".to_string(), format!("{}", args.join(" "))],

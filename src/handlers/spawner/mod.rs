@@ -1,5 +1,5 @@
-use crate::config::{get_model_config_by_name, FactoryConf, CONFIG};
-use crate::db::instance::{create_instance, delete_instance, get_instances_for, Instance};
+use crate::config::{CONFIG, FactoryConf, get_model_config_by_name};
+use crate::db::instance::{Instance, create_instance, delete_instance, get_instances_for};
 use crate::db::request::{
     count_pending_requests_for, create_request, latest_for_each_model, request_done,
 };
@@ -9,8 +9,8 @@ use crate::handlers::spawner::factories::models::RetryingModel;
 use crate::handlers::spawner::factories::runpod::RunpodModelFactory;
 use crate::handlers::spawner::factories::{DynModelFactory, ModelFactory};
 use crate::handlers::{DynHandler, Handler};
-use crate::utils::response::ModelResponse;
 use crate::utils::ModelRef;
+use crate::utils::response::ModelResponse;
 use k8s_openapi::chrono::Utc;
 use log::{error, info};
 use rand::seq::IndexedRandom;

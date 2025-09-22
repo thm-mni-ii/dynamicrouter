@@ -3,7 +3,7 @@ mod llama_cpp;
 mod tgi;
 mod vllm;
 
-use crate::config::{BackendConf, Handler, SpawnerModelHandlerConfig, CONFIG};
+use crate::config::{BackendConf, CONFIG, Handler, SpawnerModelHandlerConfig};
 use crate::handlers::spawner::backends::llama_cpp::LlamaCppBackend;
 use crate::handlers::spawner::backends::tgi::TgiBackend;
 use crate::handlers::spawner::backends::vllm::VllmBackend;

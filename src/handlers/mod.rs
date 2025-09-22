@@ -1,8 +1,8 @@
 use crate::config;
 use crate::config::get_model_config;
 use crate::handlers::spawner::SpawnerHandler;
-use crate::utils::response::ModelResponse;
 use crate::utils::ModelRef;
+use crate::utils::response::ModelResponse;
 use anyhow::Error;
 use once_cell::sync::OnceCell;
 use serde_json::Value;
@@ -17,7 +17,7 @@ pub async fn init_handlers() {
     match RH.set(rh) {
         Ok(()) => {}
         Err(_) => panic!("init_handlers should only be called once"),
-    };
+    }
 }
 
 pub fn get_handler() -> &'static RoutingHandler {

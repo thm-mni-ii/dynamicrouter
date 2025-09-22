@@ -39,6 +39,7 @@ impl<P: futures_core::Stream<Item = Result<Bytes, reqwest::Error>> + Send + Unpi
     }
 }
 
+#[allow(dead_code)]
 #[async_trait::async_trait]
 pub trait Model: Send + Sync {
     async fn id(&self) -> &str;
@@ -172,7 +173,7 @@ impl Model for RetryingModel {
                     warn!("Retrying after error: {err}");
                     sleep(Duration::from_secs(CONFIG.model_retry_interval.into())).await;
                 }
-            };
+            }
             i += 1;
         }
         Err(ModelError::RetriesExceeded().into())
@@ -194,7 +195,7 @@ impl Model for RetryingModel {
                     sleep(Duration::from_secs(CONFIG.model_retry_interval.into())).await;
                 }
                 None => return None,
-            };
+            }
             i += 1;
         }
         Some(Err(ModelError::RetriesExceeded().into()))

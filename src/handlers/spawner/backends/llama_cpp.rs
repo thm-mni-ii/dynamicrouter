@@ -1,5 +1,5 @@
 use crate::config::LlamaCppConf;
-use crate::handlers::spawner::backends::{common, Backend};
+use crate::handlers::spawner::backends::{Backend, common};
 use crate::utils::{ModelRef, QuantType};
 use std::collections::HashMap;
 
