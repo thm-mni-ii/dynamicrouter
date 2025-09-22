@@ -120,7 +120,8 @@ impl ModelFactory for KubernetesModelFactory {
             "command": backend.get_entrypoint(model),
             "args": backend.get_args(model, gpu_count),
             "volumeMounts": [
-                {"name": "models", "subPath": sub_path, "mountPath": mount_path}
+                {"name": "models", "subPath": sub_path, "mountPath": mount_path},
+                {"name": "dev-shm", "mountPath": "/dev/shm"}
             ],
             "env": env,
             "resources": {
@@ -132,7 +133,8 @@ impl ModelFactory for KubernetesModelFactory {
         "nodeSelector": node_selector,
         "tolerations": config.additional_tolerations,
         "volumes": [
-            {"name": "models", "persistentVolumeClaim": {"claimName": config.pvc_name}}
+            {"name": "models", "persistentVolumeClaim": {"claimName": config.pvc_name}},
+            {"name": "dev-shm", "emptyDir": {"medium": "Memory"}}
         ]
     }
 }))?,
