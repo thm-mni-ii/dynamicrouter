@@ -1,4 +1,4 @@
-use crate::config::LlamaCppConf;
+use crate::config::{BackendGlobalConf, BackendModelConfigMap, BackendUseFor};
 use crate::handlers::spawner::backends::{Backend, common};
 use crate::utils::{ModelRef, QuantType};
 use std::collections::HashMap;
@@ -6,15 +6,17 @@ use std::collections::HashMap;
 pub struct LlamaCppBackend {
     id: String,
     image: String,
-    ctx_length: Option<u64>,
+    use_for: BackendUseFor,
+    model_config: BackendModelConfigMap,
 }
 
-impl From<&LlamaCppConf> for LlamaCppBackend {
-    fn from(value: &LlamaCppConf) -> Self {
+impl LlamaCppBackend {
+    pub fn new(id: &str, value: &BackendGlobalConf) -> Self {
         LlamaCppBackend {
-            id: value.id.clone().unwrap_or_else(|| "llama_cpp".to_string()),
+            id: id.to_string(),
             image: value.image.clone(),
-            ctx_length: value.ctx_length,
+            use_for: value.use_for.clone(),
+            model_config: value.models.clone(),
         }
     }
 }
@@ -32,6 +34,10 @@ impl Backend for LlamaCppBackend {
         matches!(model.get_quant(), QuantType::Gguf(_))
     }
 
+    fn should_be_used_for(&self, model: &ModelRef) -> bool {
+        self.is_supported(model) && self.use_for.should_be_used_for(model.get_quant())
+    }
+
     fn get_args(&self, model: &ModelRef, _gpu_count: u8) -> Vec<String> {
         let mut args = vec![
             "--no-webui".to_string(),
@@ -45,9 +51,11 @@ impl Backend for LlamaCppBackend {
             model.get_hf_id(),
         ];
 
-        if let Some(ctx_length) = self.ctx_length {
+        let model_config = self.model_config.get_model(model);
+        if let Some(ctx_length) = model_config.ctx_length {
             args.append(&mut vec!["--ctx-size".to_string(), ctx_length.to_string()]);
         }
+        args.append(&mut model_config.arguments.clone());
 
         if let Some(path) = &model.path {
             args.append(&mut vec!["--hf-file".to_string(), path.clone()]);
@@ -67,7 +75,7 @@ impl Backend for LlamaCppBackend {
         )
     }
 
-    fn get_environment(&self) -> HashMap<String, String> {
-        common::get_environment()
+    fn get_environment(&self, model: &ModelRef) -> HashMap<String, String> {
+        common::get_environment(self.model_config.get_model(model).environment_variables)
     }
 }

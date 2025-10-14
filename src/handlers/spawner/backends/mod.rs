@@ -19,16 +19,16 @@ pub static BACKEND: Lazy<Vec<DynBackend>> = Lazy::new(|| {
     CONFIG
         .backends
         .iter()
-        .map(|backend| {
+        .map(|(id, backend)| {
             let backend: DynBackend = match backend {
                 BackendConf::Tgi(backend_image_conf) => {
-                    Arc::new(TgiBackend::from(backend_image_conf))
+                    Arc::new(TgiBackend::new(id, backend_image_conf))
                 }
                 BackendConf::Vllm(backend_image_conf) => {
-                    Arc::new(VllmBackend::from(backend_image_conf))
+                    Arc::new(VllmBackend::new(id, backend_image_conf))
                 }
                 BackendConf::LlamaCpp(backend_image_conf) => {
-                    Arc::new(LlamaCppBackend::from(backend_image_conf))
+                    Arc::new(LlamaCppBackend::new(id, backend_image_conf))
                 }
             };
             backend
@@ -54,7 +54,7 @@ pub fn get_first_supported_backend(model: &ModelRef) -> Result<DynBackend, Backe
     }
 
     backend_iter
-        .find(|backend| backend.is_supported(model))
+        .find(|backend| backend.should_be_used_for(model))
         .cloned()
         .ok_or(BackendError::NoSupportedBackedFound())
 }
@@ -63,10 +63,11 @@ pub trait Backend: Send + Sync {
     fn get_id(&self) -> String;
     fn get_image(&self) -> String;
     fn is_supported(&self, model: &ModelRef) -> bool;
+    fn should_be_used_for(&self, model: &ModelRef) -> bool;
     fn get_args(&self, model: &ModelRef, gpu_count: u8) -> Vec<String>;
     fn get_entrypoint(&self, model: &ModelRef) -> Option<Vec<String>>;
     fn get_mount(&self, model: &ModelRef) -> (String, String);
-    fn get_environment(&self) -> HashMap<String, String>;
+    fn get_environment(&self, model: &ModelRef) -> HashMap<String, String>;
 }
 
 #[derive(thiserror::Error, Debug)]

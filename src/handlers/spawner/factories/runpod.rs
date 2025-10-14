@@ -79,7 +79,7 @@ impl ModelFactory for RunpodModelFactory {
         let backend = get_first_supported_backend(model)?;
 
         let env = backend
-            .get_environment()
+            .get_environment(model)
             .into_iter()
             .map(|(key, value)| json!({"key": key, "value": value}))
             .collect::<Value>();

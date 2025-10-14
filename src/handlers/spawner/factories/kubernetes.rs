@@ -87,7 +87,7 @@ impl ModelFactory for KubernetesModelFactory {
         let id = hex::encode(rand::random::<[u8; 8]>());
 
         let env = backend
-            .get_environment()
+            .get_environment(model)
             .into_iter()
             .map(|(key, value)| json!({"name": key, "value": value}))
             .collect::<Value>();

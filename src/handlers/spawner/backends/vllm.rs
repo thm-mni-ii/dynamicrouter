@@ -1,4 +1,4 @@
-use crate::config::BackendImageConf;
+use crate::config::{BackendGlobalConf, BackendModelConfigMap, BackendUseFor};
 use crate::handlers::spawner::backends::{Backend, common};
 use crate::utils::{ModelRef, QuantType};
 use std::collections::HashMap;
@@ -6,13 +6,17 @@ use std::collections::HashMap;
 pub struct VllmBackend {
     id: String,
     image: String,
+    use_for: BackendUseFor,
+    model_config: BackendModelConfigMap,
 }
 
-impl From<&BackendImageConf> for VllmBackend {
-    fn from(value: &BackendImageConf) -> Self {
+impl VllmBackend {
+    pub fn new(id: &str, value: &BackendGlobalConf) -> Self {
         VllmBackend {
-            id: value.id.clone().unwrap_or_else(|| "vllm".to_string()),
+            id: id.to_string(),
             image: value.image.clone(),
+            use_for: value.use_for.clone(),
+            model_config: value.models.clone(),
         }
     }
 }
@@ -31,8 +35,13 @@ impl Backend for VllmBackend {
             | QuantType::FP16
             | QuantType::FP8
             | QuantType::FP4
+            | QuantType::Awq
             | QuantType::Gguf(_) => true,
         }
+    }
+
+    fn should_be_used_for(&self, model: &ModelRef) -> bool {
+        self.is_supported(model) && self.use_for.should_be_used_for(model.get_quant())
     }
 
     fn get_args(&self, model: &ModelRef, gpu_count: u8) -> Vec<String> {
@@ -84,12 +93,24 @@ impl Backend for VllmBackend {
                 "--quantization".to_string(),
                 "bitsandbytes".to_string(),
             ]),
+            QuantType::Awq => {
+                args.append(&mut vec!["--quantization".to_string(), "awq".to_string()]);
+            }
             QuantType::Gguf(_) => {
                 args.append(&mut vec!["--quantization".to_string(), "gguf".to_string()]);
             }
             QuantType::FP16 => {}
             qt => panic!("quant type {qt:?} not supported by this backends."),
         }
+
+        let model_config = self.model_config.get_model(model);
+        if let Some(ctx_length) = model_config.ctx_length {
+            args.append(&mut vec![
+                "--max-model-len".to_string(),
+                ctx_length.to_string(),
+            ]);
+        }
+        args.append(&mut model_config.arguments.clone());
 
         match model.get_quant() {
             QuantType::Gguf(_) => vec!["-c".to_string(), format!("{}", args.join(" "))],
@@ -108,7 +129,7 @@ impl Backend for VllmBackend {
         ("models".to_string(), "/models".to_string())
     }
 
-    fn get_environment(&self) -> HashMap<String, String> {
-        common::get_environment()
+    fn get_environment(&self, model: &ModelRef) -> HashMap<String, String> {
+        common::get_environment(self.model_config.get_model(model).environment_variables)
     }
 }

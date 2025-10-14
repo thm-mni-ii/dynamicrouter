@@ -1,4 +1,4 @@
-use crate::config::BackendImageConf;
+use crate::config::{BackendGlobalConf, BackendModelConfigMap, BackendUseFor};
 use crate::handlers::spawner::backends::{Backend, common};
 use crate::utils::{ModelRef, QuantType};
 use std::collections::HashMap;
@@ -6,16 +6,17 @@ use std::collections::HashMap;
 pub struct TgiBackend {
     id: String,
     image: String,
+    use_for: BackendUseFor,
+    model_config: BackendModelConfigMap,
 }
 
-impl From<&BackendImageConf> for TgiBackend {
-    fn from(value: &BackendImageConf) -> Self {
+impl TgiBackend {
+    pub fn new(id: &str, value: &BackendGlobalConf) -> Self {
         TgiBackend {
-            id: value
-                .id
-                .clone()
-                .unwrap_or_else(|| "text_generation_inference".to_string()),
+            id: id.to_string(),
             image: value.image.clone(),
+            use_for: value.use_for.clone(),
+            model_config: value.models.clone(),
         }
     }
 }
@@ -32,8 +33,12 @@ impl Backend for TgiBackend {
     fn is_supported(&self, model: &ModelRef) -> bool {
         match model.get_quant() {
             QuantType::FP32 | QuantType::FP16 | QuantType::FP8 | QuantType::FP4 => true,
-            QuantType::Gguf(_) => false,
+            QuantType::Gguf(_) | QuantType::Awq => false,
         }
+    }
+
+    fn should_be_used_for(&self, model: &ModelRef) -> bool {
+        self.is_supported(model) && self.use_for.should_be_used_for(model.get_quant())
     }
 
     fn get_args(&self, model: &ModelRef, _gpu_count: u8) -> Vec<String> {
@@ -56,6 +61,9 @@ impl Backend for TgiBackend {
             qt => panic!("quant type {qt:?} not supported by this backends."),
         }
 
+        let model_config = self.model_config.get_model(model);
+        args.append(&mut model_config.arguments.clone());
+
         args
     }
 
@@ -67,7 +75,7 @@ impl Backend for TgiBackend {
         ("models".to_string(), "/models".to_string())
     }
 
-    fn get_environment(&self) -> HashMap<String, String> {
-        common::get_environment()
+    fn get_environment(&self, model: &ModelRef) -> HashMap<String, String> {
+        common::get_environment(self.model_config.get_model(model).environment_variables)
     }
 }

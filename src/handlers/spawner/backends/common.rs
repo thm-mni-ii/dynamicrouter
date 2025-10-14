@@ -2,7 +2,7 @@ use crate::config::CONFIG;
 use secrecy::ExposeSecret;
 use std::collections::HashMap;
 
-pub fn get_environment() -> HashMap<String, String> {
+pub fn get_environment(additional: HashMap<String, String>) -> HashMap<String, String> {
     [
         CONFIG
             .huggingface
@@ -13,5 +13,6 @@ pub fn get_environment() -> HashMap<String, String> {
     ]
     .into_iter()
     .flatten()
+    .chain(additional)
     .collect()
 }

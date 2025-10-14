@@ -1,6 +1,6 @@
 #![allow(unreachable_patterns)]
 
-use crate::utils::ModelRef;
+use crate::utils::{ModelRef, QuantType};
 use config::Config;
 use log::error;
 use once_cell::sync::Lazy;
@@ -54,7 +54,7 @@ pub struct Conf {
     pub model_retry_interval: u32,
     pub huggingface: HuggingfaceConf,
     pub factory: FactoryConf,
-    pub backends: Vec<BackendConf>,
+    pub backends: HashMap<String, BackendConf>,
     pub users: HashMap<String, User>,
     #[serde(default = "default_aliases")]
     pub aliases: HashMap<String, Alias>,
@@ -257,23 +257,53 @@ pub struct KubernetesModel {
 #[serde(tag = "type")]
 pub enum BackendConf {
     #[serde(rename = "tgi")]
-    Tgi(BackendImageConf),
+    Tgi(BackendGlobalConf),
     #[serde(rename = "vllm")]
-    Vllm(BackendImageConf),
+    Vllm(BackendGlobalConf),
     #[serde(rename = "llama_cpp")]
-    LlamaCpp(LlamaCppConf),
+    LlamaCpp(BackendGlobalConf),
 }
 
 #[derive(Deserialize, Debug)]
-pub struct BackendImageConf {
+pub struct BackendGlobalConf {
     pub image: String,
-    pub id: Option<String>,
+    #[serde(default)]
+    pub use_for: BackendUseFor,
+    #[serde(default)]
+    pub models: BackendModelConfigMap,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct LlamaCppConf {
-    pub image: String,
-    pub id: Option<String>,
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct BackendModelConfigMap(HashMap<String, BackendModelConf>);
+
+impl BackendModelConfigMap {
+    pub fn get_model(&self, model_ref: &ModelRef) -> BackendModelConf {
+        self.0
+            .get(&model_ref.to_string())
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct BackendUseFor(Option<HashSet<QuantType>>);
+
+impl BackendUseFor {
+    pub fn should_be_used_for(&self, quant_type: QuantType) -> bool {
+        match &self.0 {
+            None => true,
+            Some(quants) => quants.contains(&quant_type),
+        }
+    }
+}
+
+#[derive(Deserialize, Debug, Default, Clone)]
+pub struct BackendModelConf {
+    #[serde(default)]
+    pub environment_variables: HashMap<String, String>,
+    #[serde(default)]
+    pub arguments: Vec<String>,
+    #[serde(default)]
     pub ctx_length: Option<u64>,
 }
 

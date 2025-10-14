@@ -5,7 +5,7 @@ pub mod response;
 use crate::utils::huggingface::HfModel;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::num::TryFromIntError;
 use std::str::FromStr;
@@ -15,7 +15,8 @@ static MODEL_REF_REGEXP: Lazy<Regex> =
 static QUANT_REGEXP: Lazy<Regex> = Lazy::new(|| Regex::new(r"^([Gg])(\d{1,2})$").unwrap());
 static PARAMETER_COUNT_EXTRACTION_REGEXP: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\d+[BMbm]").unwrap());
-static QUANT_EXTRACTION_REGEXP: Lazy<Regex> = Lazy::new(|| Regex::new(r"[qQ](\d+)").unwrap());
+static QUANT_PATH_EXTRACTION_REGEXP: Lazy<Regex> = Lazy::new(|| Regex::new(r"[qQ](\d+)").unwrap());
+static QUANT_REPO_EXTRACTION_REGEXP: Lazy<Regex> = Lazy::new(|| Regex::new(r"AWQ|awq").unwrap());
 
 #[derive(Debug, Clone)]
 pub struct ModelRef {
@@ -58,10 +59,18 @@ impl FromStr for ModelRef {
                 .transpose()?,
             quant_inferred: res
                 .get(4)
-                .and_then(|m| QUANT_EXTRACTION_REGEXP.captures(m.as_str()))
+                .and_then(|m| QUANT_PATH_EXTRACTION_REGEXP.captures(m.as_str()))
                 .and_then(|m| m.get(1))
-                .and_then(|q| q.as_str().parse::<u8>().ok())
-                .map(QuantType::Gguf),
+                .and_then(|q| q.as_str().parse::<u8>().ok().map(QuantType::Gguf))
+                .or_else(|| {
+                    res.get(2).and_then(|m| {
+                        if QUANT_REPO_EXTRACTION_REGEXP.is_match(m.as_str()) {
+                            Some(QuantType::Awq)
+                        } else {
+                            None
+                        }
+                    })
+                }),
         })
     }
 }
@@ -96,12 +105,13 @@ impl Display for ModelRef {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum QuantType {
     FP32,
     FP16,
     FP8,
     FP4,
+    Awq,
     Gguf(u8),
 }
 
@@ -111,7 +121,7 @@ impl QuantType {
             QuantType::FP32 => 4.0,
             QuantType::FP16 => 2.0,
             QuantType::FP8 => 1.0,
-            QuantType::FP4 => 0.5,
+            QuantType::FP4 | QuantType::Awq => 0.5,
             QuantType::Gguf(q) => f64::from(q) / 8.0,
         }
     }
@@ -126,6 +136,7 @@ impl FromStr for QuantType {
             "fp16" => QuantType::FP16,
             "fp8" => QuantType::FP8,
             "fp4" => QuantType::FP4,
+            "awq" => QuantType::Awq,
             oe => {
                 let res = QUANT_REGEXP
                     .captures(oe)
@@ -151,6 +162,17 @@ impl FromStr for QuantType {
     }
 }
 
+impl<'de> Deserialize<'de> for QuantType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 impl Display for QuantType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -161,6 +183,7 @@ impl Display for QuantType {
                 QuantType::FP16 => "fp16".to_string(),
                 QuantType::FP8 => "fp8".to_string(),
                 QuantType::FP4 => "fp4".to_string(),
+                QuantType::Awq => "awq".to_string(),
                 QuantType::Gguf(size) => format!("G{size}"),
             }
         )
