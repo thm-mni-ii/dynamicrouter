@@ -1,6 +1,6 @@
 use crate::config::CONFIG;
+use crate::handlers::spawner::factories::models::ModelError::{NonRetryableError, RetryableError};
 use crate::utils::response::ModelResponse;
-use anyhow::Error;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures_util::StreamExt;
@@ -10,6 +10,7 @@ use reqwest::{Client, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
+use std::fmt::{Display, Formatter};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -44,13 +45,51 @@ impl<P: futures_core::Stream<Item = Result<Bytes, reqwest::Error>> + Send + Unpi
 pub trait Model: Send + Sync {
     async fn id(&self) -> &str;
     async fn name(&self) -> &str;
-    async fn generate(&self, request: &Value) -> Result<ModelResponse, anyhow::Error>;
-    async fn serialize(&self) -> Result<Vec<u8>, anyhow::Error>;
+    async fn generate(&self, request: &Value) -> Result<ModelResponse, ModelError<anyhow::Error>>;
     async fn invoke(
         &self,
         path: &str,
         body: &Value,
-    ) -> Option<Result<ModelResponse, anyhow::Error>>;
+    ) -> Option<Result<ModelResponse, ModelError<anyhow::Error>>>;
+    async fn serialize(&self) -> Result<Vec<u8>, anyhow::Error>;
+}
+
+#[derive(Debug)]
+pub enum ModelError<E> {
+    RetryableError(E),
+    NonRetryableError(E),
+}
+
+impl<E> ModelError<E> {
+    pub fn is_retryable(&self) -> bool {
+        matches!(*self, RetryableError(_))
+    }
+
+    pub fn is_non_retryable(&self) -> bool {
+        !self.is_retryable()
+    }
+}
+
+impl<E: Display> Display for ModelError<E> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RetryableError(e) | NonRetryableError(e) => e.fmt(f),
+        }
+    }
+}
+
+impl From<ModelError<anyhow::Error>> for anyhow::Error {
+    fn from(value: ModelError<anyhow::Error>) -> Self {
+        match value {
+            RetryableError(e) | NonRetryableError(e) => e,
+        }
+    }
+}
+
+impl<E: std::error::Error + Send + Sync + 'static> From<E> for ModelError<anyhow::Error> {
+    fn from(value: E) -> Self {
+        RetryableError(value.into())
+    }
 }
 
 pub type DynModel = Arc<dyn Model>;
@@ -89,7 +128,11 @@ impl HttpModel {
         Ok(Arc::new(serde_json::from_slice::<Self>(data)?))
     }
 
-    async fn request(&self, path: &str, request: &Value) -> Result<ModelResponse, anyhow::Error> {
+    async fn request(
+        &self,
+        path: &str,
+        request: &Value,
+    ) -> Result<ModelResponse, ModelError<anyhow::Error>> {
         let mut url = self.url.clone();
         url.set_path(path);
         let mut builder = self.client.post(url).json(request);
@@ -100,7 +143,9 @@ impl HttpModel {
         let res = builder.send().await?;
         let status = res.status();
         if !OK_STATUS_CODES.contains(&status) {
-            return Err(ModelError::UnexpectedStatus(status).into());
+            return Err(ModelError::RetryableError(
+                HttpModelError::UnexpectedStatus(status).into(),
+            ));
         }
 
         Ok(ModelResponse {
@@ -125,20 +170,20 @@ impl Model for HttpModel {
         &self.name
     }
 
-    async fn generate(&self, request: &Value) -> Result<ModelResponse, anyhow::Error> {
+    async fn generate(&self, request: &Value) -> Result<ModelResponse, ModelError<anyhow::Error>> {
         self.request("/v1/chat/completions", request).await
-    }
-
-    async fn serialize(&self) -> Result<Vec<u8>, anyhow::Error> {
-        Ok(serde_json::to_vec(self)?)
     }
 
     async fn invoke(
         &self,
         path: &str,
         body: &Value,
-    ) -> Option<Result<ModelResponse, anyhow::Error>> {
+    ) -> Option<Result<ModelResponse, ModelError<anyhow::Error>>> {
         Some(self.request(path, body).await)
+    }
+
+    async fn serialize(&self) -> Result<Vec<u8>, anyhow::Error> {
+        Ok(serde_json::to_vec(self)?)
     }
 }
 
@@ -162,7 +207,7 @@ impl Model for RetryingModel {
         self.parent.name().await
     }
 
-    async fn generate(&self, request: &Value) -> Result<ModelResponse, anyhow::Error> {
+    async fn generate(&self, request: &Value) -> Result<ModelResponse, ModelError<anyhow::Error>> {
         let mut i = 0;
         while i < CONFIG.model_timeout / CONFIG.model_retry_interval {
             match self.parent.generate(request).await {
@@ -170,20 +215,23 @@ impl Model for RetryingModel {
                     return Ok(res);
                 }
                 Err(err) => {
+                    if err.is_non_retryable() {
+                        return Err(err);
+                    }
                     warn!("Retrying after error: {err}");
                     sleep(Duration::from_secs(CONFIG.model_retry_interval.into())).await;
                 }
             }
             i += 1;
         }
-        Err(ModelError::RetriesExceeded().into())
+        Err(RetryingModelError::RetriesExceeded().into())
     }
 
-    async fn serialize(&self) -> Result<Vec<u8>, anyhow::Error> {
-        self.parent.serialize().await
-    }
-
-    async fn invoke(&self, path: &str, body: &Value) -> Option<Result<ModelResponse, Error>> {
+    async fn invoke(
+        &self,
+        path: &str,
+        body: &Value,
+    ) -> Option<Result<ModelResponse, ModelError<anyhow::Error>>> {
         let mut i = 0;
         while i < CONFIG.model_timeout / CONFIG.model_retry_interval {
             match self.parent.invoke(path, body).await {
@@ -198,14 +246,22 @@ impl Model for RetryingModel {
             }
             i += 1;
         }
-        Some(Err(ModelError::RetriesExceeded().into()))
+        Some(Err(RetryingModelError::RetriesExceeded().into()))
+    }
+
+    async fn serialize(&self) -> Result<Vec<u8>, anyhow::Error> {
+        self.parent.serialize().await
     }
 }
 
 #[derive(Debug, Error)]
-enum ModelError {
+enum RetryingModelError {
     #[error("model not responding after exceeding retries")]
     RetriesExceeded(),
+}
+
+#[derive(Debug, Error)]
+enum HttpModelError {
     #[error("unexpected status {0}")]
     UnexpectedStatus(StatusCode),
 }

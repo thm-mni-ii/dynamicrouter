@@ -5,7 +5,7 @@ use crate::db::request::{
 };
 use crate::fatal;
 use crate::handlers::spawner::factories::kubernetes::KubernetesModelFactory;
-use crate::handlers::spawner::factories::models::RetryingModel;
+use crate::handlers::spawner::factories::models::{ModelError, RetryingModel};
 use crate::handlers::spawner::factories::runpod::RunpodModelFactory;
 use crate::handlers::spawner::factories::{DynModelFactory, ModelFactory};
 use crate::handlers::{DynHandler, Handler};
@@ -140,7 +140,22 @@ impl Handler for SpawnerHandler {
         let result = model.generate(request).await;
 
         request_done(&request_id).await?;
-        result
+
+        if let Err(ModelError::NonRetryableError(e)) = &result {
+            let model_id = model.id().await.to_string();
+            error!(
+                "non retryable error while processing request for {} ({}): {}",
+                model_id,
+                model.name().await,
+                e
+            );
+            if let Err(e) = self.model_factory.destroy(model).await {
+                error!("error while destroying non retryable model {model_id}: {e}",);
+            }
+            delete_instance(&model_id).await?;
+        }
+
+        Ok(result?)
     }
 }
 

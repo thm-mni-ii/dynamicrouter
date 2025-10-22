@@ -14,15 +14,22 @@ pub async fn completions(
     authorization: Authorization<'_>,
     body: Json<Value>,
 ) -> Result<ModelResponse, StatusCode> {
-    let model = generate(&authorization, &body)?;
+    let models = generate(&authorization, &body)?;
 
-    match get_handler().generate(&model, &body.0).await {
-        Ok(res) => Ok(res),
-        Err(err) => {
-            error!("Error while generating using model: {err:?}");
-            Err(StatusCode::BAD_GATEWAY)
+    let mut result = Err(StatusCode::BAD_REQUEST);
+    for model in models {
+        match get_handler().generate(&model, &body.0).await {
+            Ok(res) => {
+                result = Ok(res);
+            }
+            Err(err) => {
+                error!("Error while generating using model: {err:?}");
+                result = Err(StatusCode::BAD_GATEWAY);
+            }
         }
     }
+
+    result
 }
 
 pub async fn models(authorization: Authorization<'_>) -> Result<Json<Value>, StatusCode> {
@@ -81,8 +88,11 @@ impl<S: Send + Sync> FromRequestParts<S> for Authorization<'_> {
     }
 }
 
-fn generate(authorization: &Authorization, body: &Json<Value>) -> Result<ModelRef, StatusCode> {
-    let Some(model) = body
+fn generate(
+    authorization: &Authorization,
+    body: &Json<Value>,
+) -> Result<Vec<ModelRef>, StatusCode> {
+    let Some(models) = body
         .get("model")
         .and_then(|v| v.as_str())
         .map(|m| {
@@ -91,32 +101,38 @@ fn generate(authorization: &Authorization, body: &Json<Value>) -> Result<ModelRe
                 .get(m)
                 .map_or_else(|| m.to_string(), |a| a.to.clone())
         })
-        .and_then(|m| m.parse::<ModelRef>().ok())
+        .and_then(|ms| {
+            ms.split(',')
+                .map(|m| m.parse().ok())
+                .collect::<Option<Vec<ModelRef>>>()
+        })
     else {
         return Err(StatusCode::BAD_REQUEST);
     };
-    debug!("Received request for model {model:?}");
+    debug!("Received request for models {models:?}");
 
-    if let Some(model_conf) = CONFIG
-        .models
-        .get(&model.to_string())
-        .or_else(|| CONFIG.models.get("*"))
-    {
-        if !(model_conf
-            .limit_to_users
-            .as_ref()
-            .is_none_or(|limited| limited.contains(authorization.username))
-            && authorization
-                .user
-                .limit_to_models
-                .as_ref()
-                .is_none_or(|limited| limited.contains(&model.to_string())))
+    for model in &models {
+        if let Some(model_conf) = CONFIG
+            .models
+            .get(&model.to_string())
+            .or_else(|| CONFIG.models.get("*"))
         {
-            warn!("{} is not allowed to use {model}", authorization.username);
-            return Err(StatusCode::FORBIDDEN);
+            if !(model_conf
+                .limit_to_users
+                .as_ref()
+                .is_none_or(|limited| limited.contains(authorization.username))
+                && authorization
+                    .user
+                    .limit_to_models
+                    .as_ref()
+                    .is_none_or(|limited| limited.contains(&model.to_string())))
+            {
+                warn!("{} is not allowed to use {model}", authorization.username);
+                return Err(StatusCode::FORBIDDEN);
+            }
+        } else {
+            return Err(StatusCode::NOT_FOUND);
         }
-    } else {
-        return Err(StatusCode::NOT_FOUND);
     }
-    Ok(model)
+    Ok(models)
 }

@@ -1,7 +1,7 @@
 use crate::config::{CONFIG, KubernetesConf, KubernetesGpu};
 use crate::handlers::spawner::backends::get_first_supported_backend;
 use crate::handlers::spawner::factories::ModelFactory;
-use crate::handlers::spawner::factories::models::{DynModel, HttpModel, Model};
+use crate::handlers::spawner::factories::models::{DynModel, HttpModel, Model, ModelError};
 use crate::utils::response::ModelResponse;
 use crate::utils::{ByteSize, ModelRef, ModelSizes};
 use anyhow::Error;
@@ -199,19 +199,32 @@ impl KubernetesResolvingModel {
         })
     }
 
-    async fn get_parent(&self) -> Result<&DynModel, anyhow::Error> {
+    async fn get_parent(&self) -> Result<&DynModel, ModelError<anyhow::Error>> {
         if let Some(parent) = self.parent.get() {
             return Ok(parent);
         }
         let cr = self
             .api
-            .get(&format!("dynamicrouter-inference-{}", self.id))
+            .get_opt(&format!("dynamicrouter-inference-{}", self.id))
             .await?;
 
-        let ip = cr
-            .status
-            .and_then(|s| s.pod_ip)
-            .ok_or(KubernetesError::NoIP())?;
+        let pod =
+            cr.ok_or_else(|| ModelError::NonRetryableError(KubernetesError::PodNotFound().into()))?;
+
+        let status = pod.status.as_ref().ok_or_else(KubernetesError::NotReady)?;
+
+        if let Some(scheduled) = status
+            .conditions
+            .as_ref()
+            .and_then(|conditions| conditions.iter().find(|c| c.type_ == "PodScheduled"))
+            .filter(|condition| condition.reason.as_deref() == Some("Unschedulable"))
+        {
+            return Err(ModelError::NonRetryableError(
+                KubernetesError::Unschedulable(scheduled.message.clone()).into(),
+            ));
+        }
+
+        let ip = status.pod_ip.clone().ok_or(KubernetesError::NotReady())?;
 
         let _ = self.parent.set(HttpModel::new_dyn(
             self.id.clone(),
@@ -234,28 +247,36 @@ impl Model for KubernetesResolvingModel {
         &self.name
     }
 
-    async fn generate(&self, request: &Value) -> Result<ModelResponse, Error> {
+    async fn generate(&self, request: &Value) -> Result<ModelResponse, ModelError<anyhow::Error>> {
         let parent = self.get_parent().await?;
         parent.generate(request).await
     }
 
-    async fn serialize(&self) -> Result<Vec<u8>, Error> {
-        Ok(serde_json::to_vec(self)?)
-    }
-
-    async fn invoke(&self, path: &str, body: &Value) -> Option<Result<ModelResponse, Error>> {
+    async fn invoke(
+        &self,
+        path: &str,
+        body: &Value,
+    ) -> Option<Result<ModelResponse, ModelError<anyhow::Error>>> {
         let parent = match self.get_parent().await {
             Ok(parent) => parent,
             Err(e) => return Some(Err(e)),
         };
         parent.invoke(path, body).await
     }
+
+    async fn serialize(&self) -> Result<Vec<u8>, Error> {
+        Ok(serde_json::to_vec(self)?)
+    }
 }
 
 #[derive(Debug, Error)]
 pub enum KubernetesError {
+    #[error("pod does not exist")]
+    PodNotFound(),
     #[error("failed to extract pod ip")]
-    NoIP(),
+    NotReady(),
+    #[error("pod unschedulable: 0")]
+    Unschedulable(Option<String>),
     #[error("no gpu configuration with enough memory found")]
     NoGpuConfig(),
     #[error("failed to deserialize")]
