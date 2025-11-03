@@ -224,6 +224,23 @@ impl KubernetesResolvingModel {
             ));
         }
 
+        if status.container_statuses.as_ref().is_some_and(|statuses| {
+            statuses
+                .iter()
+                .map(|status| {
+                    status
+                        .state
+                        .as_ref()
+                        .and_then(|state| state.waiting.as_ref())
+                        .and_then(|state| state.reason.as_ref())
+                })
+                .any(|reason| reason == Some(&"CrashLoopBackOff".to_string()))
+        }) {
+            return Err(ModelError::NonRetryableError(
+                KubernetesError::Unschedulable("CrashLoopBackOff".to_string().into()).into(),
+            ));
+        }
+
         let ip = status.pod_ip.clone().ok_or(KubernetesError::NotReady())?;
 
         let _ = self.parent.set(HttpModel::new_dyn(
