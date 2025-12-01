@@ -1,0 +1,9 @@
+[package]
+name = "ui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+leptos = { version = "0.8.14", features = ["csr"] }
+reqwest = { version = "0.12.24", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }

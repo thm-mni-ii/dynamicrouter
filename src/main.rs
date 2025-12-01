@@ -11,11 +11,13 @@ mod db;
 mod handlers;
 mod routes;
 mod runtime;
+mod ui;
 mod utils;
 
 use crate::config::{CONFIG, TlsConfig};
 use crate::handlers::init_handlers;
 use crate::runtime::RUNTIME;
+use crate::ui::new_static_router;
 use axum::Router;
 use axum::routing::{get, post};
 use axum_server::tls_rustls::RustlsConfig;
@@ -43,6 +45,7 @@ async fn async_main() {
     init_handlers().await;
 
     let app = Router::new()
+        .merge(new_static_router())
         .route("/v1/chat/completions", post(routes::completions))
         .route("/v1/models", get(routes::models));
 
