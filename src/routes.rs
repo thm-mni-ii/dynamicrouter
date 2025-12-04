@@ -1,5 +1,5 @@
 use crate::config::{CONFIG, User};
-use crate::handlers::{Handler, get_handler};
+use crate::handlers::{GenerationType, Handler, get_handler};
 use crate::utils::ModelRef;
 use crate::utils::response::ModelResponse;
 use axum::Json;
@@ -14,22 +14,14 @@ pub async fn completions(
     authorization: Authorization<'_>,
     body: Json<Value>,
 ) -> Result<ModelResponse, StatusCode> {
-    let models = generate(&authorization, &body)?;
+    generate(GenerationType::Completions, authorization, body).await?
+}
 
-    let mut result = Err(StatusCode::BAD_REQUEST);
-    for model in models {
-        match get_handler().generate(&model, &body.0).await {
-            Ok(res) => {
-                result = Ok(res);
-            }
-            Err(err) => {
-                error!("Error while generating using model: {err:?}");
-                result = Err(StatusCode::BAD_GATEWAY);
-            }
-        }
-    }
-
-    result
+pub async fn embeddings(
+    authorization: Authorization<'_>,
+    body: Json<Value>,
+) -> Result<ModelResponse, StatusCode> {
+    generate(GenerationType::Embeddings, authorization, body).await?
 }
 
 pub async fn models(authorization: Authorization<'_>) -> Result<Json<Value>, StatusCode> {
@@ -88,7 +80,7 @@ impl<S: Send + Sync> FromRequestParts<S> for Authorization<'_> {
     }
 }
 
-fn generate(
+fn extract_models(
     authorization: &Authorization,
     body: &Json<Value>,
 ) -> Result<Vec<ModelRef>, StatusCode> {
@@ -135,4 +127,30 @@ fn generate(
         }
     }
     Ok(models)
+}
+
+async fn generate(
+    generation_type: GenerationType,
+    authorization: Authorization<'_>,
+    body: Json<Value>,
+) -> Result<Result<ModelResponse, StatusCode>, StatusCode> {
+    let models = extract_models(&authorization, &body)?;
+
+    let mut result = Err(StatusCode::BAD_REQUEST);
+    for model in models {
+        match get_handler()
+            .generate(generation_type, &model, &body.0)
+            .await
+        {
+            Ok(res) => {
+                result = Ok(res);
+            }
+            Err(err) => {
+                error!("Error while generating using model: {err:?}");
+                result = Err(StatusCode::BAD_GATEWAY);
+            }
+        }
+    }
+
+    Ok(result)
 }

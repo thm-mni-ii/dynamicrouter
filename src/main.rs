@@ -47,6 +47,7 @@ async fn async_main() {
     let app = Router::new()
         .merge(new_static_router())
         .route("/v1/chat/completions", post(routes::completions))
+        .route("/v1/embeddings", post(routes::embeddings))
         .route("/v1/models", get(routes::models));
 
     let port = CONFIG.port;

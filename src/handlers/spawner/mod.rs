@@ -8,7 +8,7 @@ use crate::handlers::spawner::factories::kubernetes::KubernetesModelFactory;
 use crate::handlers::spawner::factories::models::{ModelError, RetryingModel};
 use crate::handlers::spawner::factories::runpod::RunpodModelFactory;
 use crate::handlers::spawner::factories::{DynModelFactory, ModelFactory};
-use crate::handlers::{DynHandler, Handler};
+use crate::handlers::{DynHandler, GenerationType, Handler};
 use crate::utils::ModelRef;
 use crate::utils::response::ModelResponse;
 use k8s_openapi::chrono::Utc;
@@ -93,6 +93,7 @@ impl SpawnerHandler {
 impl Handler for SpawnerHandler {
     async fn generate(
         &self,
+        generation_type: GenerationType,
         model: &ModelRef,
         request: &Value,
     ) -> Result<ModelResponse, anyhow::Error> {
@@ -137,7 +138,7 @@ impl Handler for SpawnerHandler {
         drop(_lock_guard);
 
         let model = RetryingModel::new_dyn(dyn_model);
-        let result = model.generate(request).await;
+        let result = model.generate(generation_type, request).await;
 
         request_done(&request_id).await?;
 

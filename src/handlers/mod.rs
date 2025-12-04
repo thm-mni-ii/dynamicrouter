@@ -5,6 +5,7 @@ use crate::utils::ModelRef;
 use crate::utils::response::ModelResponse;
 use anyhow::Error;
 use once_cell::sync::OnceCell;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -25,10 +26,17 @@ pub fn get_handler() -> &'static RoutingHandler {
         .expect("you tried to access the handler before it was initialized")
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
+pub enum GenerationType {
+    Completions,
+    Embeddings,
+}
+
 #[async_trait::async_trait]
 pub trait Handler: Send + Sync {
     async fn generate(
         &self,
+        generation_type: GenerationType,
         model: &ModelRef,
         request: &Value,
     ) -> Result<ModelResponse, anyhow::Error>;
@@ -50,10 +58,19 @@ impl RoutingHandler {
 
 #[async_trait::async_trait]
 impl Handler for RoutingHandler {
-    async fn generate(&self, model: &ModelRef, request: &Value) -> Result<ModelResponse, Error> {
+    async fn generate(
+        &self,
+        generation_type: GenerationType,
+        model: &ModelRef,
+        request: &Value,
+    ) -> Result<ModelResponse, Error> {
         let model_conf = get_model_config(model)?;
         match model_conf.handler {
-            config::Handler::Spawner { .. } => self.default_handler.generate(model, request).await,
+            config::Handler::Spawner { .. } => {
+                self.default_handler
+                    .generate(generation_type, model, request)
+                    .await
+            }
         }
     }
 }

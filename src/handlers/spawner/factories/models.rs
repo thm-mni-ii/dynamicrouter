@@ -1,4 +1,5 @@
 use crate::config::CONFIG;
+use crate::handlers::GenerationType;
 use crate::handlers::spawner::factories::models::ModelError::{NonRetryableError, RetryableError};
 use crate::utils::response::ModelResponse;
 use async_trait::async_trait;
@@ -45,7 +46,11 @@ impl<P: futures_core::Stream<Item = Result<Bytes, reqwest::Error>> + Send + Unpi
 pub trait Model: Send + Sync {
     async fn id(&self) -> &str;
     async fn name(&self) -> &str;
-    async fn generate(&self, request: &Value) -> Result<ModelResponse, ModelError<anyhow::Error>>;
+    async fn generate(
+        &self,
+        generation_type: GenerationType,
+        request: &Value,
+    ) -> Result<ModelResponse, ModelError<anyhow::Error>>;
     async fn invoke(
         &self,
         path: &str,
@@ -170,8 +175,19 @@ impl Model for HttpModel {
         &self.name
     }
 
-    async fn generate(&self, request: &Value) -> Result<ModelResponse, ModelError<anyhow::Error>> {
-        self.request("/v1/chat/completions", request).await
+    async fn generate(
+        &self,
+        generation_type: GenerationType,
+        request: &Value,
+    ) -> Result<ModelResponse, ModelError<anyhow::Error>> {
+        self.request(
+            match generation_type {
+                GenerationType::Completions => "/v1/chat/completions",
+                GenerationType::Embeddings => "/v1/embeddings",
+            },
+            request,
+        )
+        .await
     }
 
     async fn invoke(
@@ -207,10 +223,14 @@ impl Model for RetryingModel {
         self.parent.name().await
     }
 
-    async fn generate(&self, request: &Value) -> Result<ModelResponse, ModelError<anyhow::Error>> {
+    async fn generate(
+        &self,
+        generation_type: GenerationType,
+        request: &Value,
+    ) -> Result<ModelResponse, ModelError<anyhow::Error>> {
         let mut i = 0;
         while i < CONFIG.model_timeout / CONFIG.model_retry_interval {
-            match self.parent.generate(request).await {
+            match self.parent.generate(generation_type, request).await {
                 Ok(res) => {
                     return Ok(res);
                 }

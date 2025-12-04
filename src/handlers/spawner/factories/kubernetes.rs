@@ -1,4 +1,5 @@
 use crate::config::{CONFIG, KubernetesConf, KubernetesGpu};
+use crate::handlers::GenerationType;
 use crate::handlers::spawner::backends::get_first_supported_backend;
 use crate::handlers::spawner::factories::ModelFactory;
 use crate::handlers::spawner::factories::models::{DynModel, HttpModel, Model, ModelError};
@@ -279,9 +280,13 @@ impl Model for KubernetesResolvingModel {
         &self.name
     }
 
-    async fn generate(&self, request: &Value) -> Result<ModelResponse, ModelError<anyhow::Error>> {
+    async fn generate(
+        &self,
+        generation_type: GenerationType,
+        request: &Value,
+    ) -> Result<ModelResponse, ModelError<anyhow::Error>> {
         let parent = self.get_parent().await?;
-        parent.generate(request).await
+        parent.generate(generation_type, request).await
     }
 
     async fn invoke(
