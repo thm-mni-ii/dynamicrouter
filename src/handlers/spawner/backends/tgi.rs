@@ -75,6 +75,10 @@ impl Backend for TgiBackend {
         ("models".to_string(), "/models".to_string())
     }
 
+    fn get_cache_mount(&self, _model: &ModelRef) -> Option<(String, String)> {
+        None
+    }
+
     fn get_environment(&self, model: &ModelRef) -> HashMap<String, String> {
         common::get_environment(self.model_config.get_model(model).environment_variables)
     }

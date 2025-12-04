@@ -67,6 +67,7 @@ pub trait Backend: Send + Sync {
     fn get_args(&self, model: &ModelRef, gpu_count: u8) -> Vec<String>;
     fn get_entrypoint(&self, model: &ModelRef) -> Option<Vec<String>>;
     fn get_mount(&self, model: &ModelRef) -> (String, String);
+    fn get_cache_mount(&self, model: &ModelRef) -> Option<(String, String)>;
     fn get_environment(&self, model: &ModelRef) -> HashMap<String, String>;
 }
 

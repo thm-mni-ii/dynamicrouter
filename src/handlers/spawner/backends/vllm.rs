@@ -71,15 +71,12 @@ impl Backend for VllmBackend {
             ]);
         }
 
-        args.append(&mut vec![
-            "--model".to_string(),
-            match &model.get_quant() {
-                QuantType::Gguf(_) => {
-                    format!("$MODEL_PATH/{}", model.path.clone().unwrap_or_default())
-                }
-                _ => model.get_hf_id(),
-            },
-        ]);
+        args.append(&mut vec![match &model.get_quant() {
+            QuantType::Gguf(_) => {
+                format!("$MODEL_PATH/{}", model.path.clone().unwrap_or_default())
+            }
+            _ => model.get_hf_id(),
+        }]);
 
         if let Some(rev) = &model.rev {
             args.append(&mut vec!["--revision".to_string(), rev.to_string()]);
@@ -127,6 +124,10 @@ impl Backend for VllmBackend {
 
     fn get_mount(&self, _model: &ModelRef) -> (String, String) {
         ("models".to_string(), "/models".to_string())
+    }
+
+    fn get_cache_mount(&self, _model: &ModelRef) -> Option<(String, String)> {
+        Some(("vllm".to_string(), "/root/.cache/vllm".to_string()))
     }
 
     fn get_environment(&self, model: &ModelRef) -> HashMap<String, String> {

@@ -105,40 +105,55 @@ impl ModelFactory for KubernetesModelFactory {
 
         let (sub_path, mount_path) = backend.get_mount(model);
 
-        self.pod_api.create(
-            &PostParams::default(),
-            &serde_json::from_value(json!({
-    "apiVersion": "v1",
-    "kind": "Pod",
-    "metadata": {
-        "name": format!("dynamicrouter-inference-{id}")
-    },
-    "spec": {
-        "containers": [{
-            "name": "inference",
-            "image": backend.get_image(),
-            "command": backend.get_entrypoint(model),
-            "args": backend.get_args(model, gpu_count),
-            "volumeMounts": [
-                {"name": "models", "subPath": sub_path, "mountPath": mount_path},
-                {"name": "dev-shm", "mountPath": "/dev/shm"}
-            ],
-            "env": env,
-            "resources": {
-                "limits": {
-                    "nvidia.com/gpu": gpu_count.to_string(),
-                }
+        let mut volumes = vec![
+            json!({"name": "models", "persistentVolumeClaim": {"claimName": config.pvc_name}}),
+            json!({"name": "dev-shm", "emptyDir": {"medium": "Memory"}}),
+        ];
+
+        let mut volume_mounts = vec![
+            json!({"name": "models", "subPath": sub_path, "mountPath": mount_path}),
+            json!({"name": "dev-shm", "mountPath": "/dev/shm"}),
+        ];
+
+        #[allow(clippy::collapsible_if)]
+        if let Some(cache_pvc_name) = config.cache_pvc_name {
+            if let Some((sub_path, mount_path)) = backend.get_cache_mount(model) {
+                volumes.push(json!({"name": "cache", "persistentVolumeClaim": {"claimName": cache_pvc_name}}));
+                volume_mounts
+                    .push(json!({"name": "cache", "subPath": sub_path, "mountPath": mount_path}));
             }
-        }],
-        "nodeSelector": node_selector,
-        "tolerations": config.additional_tolerations,
-        "volumes": [
-            {"name": "models", "persistentVolumeClaim": {"claimName": config.pvc_name}},
-            {"name": "dev-shm", "emptyDir": {"medium": "Memory"}}
-        ]
-    }
-}))?,
-        ).await?;
+        }
+
+        self.pod_api
+            .create(
+                &PostParams::default(),
+                &serde_json::from_value(json!({
+                    "apiVersion": "v1",
+                    "kind": "Pod",
+                    "metadata": {
+                        "name": format!("dynamicrouter-inference-{id}")
+                    },
+                    "spec": {
+                        "containers": [{
+                            "name": "inference",
+                            "image": backend.get_image(),
+                            "command": backend.get_entrypoint(model),
+                            "args": backend.get_args(model, gpu_count),
+                            "volumeMounts": volume_mounts,
+                            "env": env,
+                            "resources": {
+                                "limits": {
+                                    "nvidia.com/gpu": gpu_count.to_string(),
+                                }
+                            }
+                        }],
+                        "nodeSelector": node_selector,
+                        "tolerations": config.additional_tolerations,
+                        "volumes": volumes,
+                    }
+                }))?,
+            )
+            .await?;
 
         Ok(KubernetesResolvingModel::new_dyn(
             id,

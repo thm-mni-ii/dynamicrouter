@@ -192,6 +192,7 @@ pub struct RunpodModel {
 pub struct KubernetesConf {
     pub namespace: String,
     pub pvc_name: String,
+    pub cache_pvc_name: Option<String>,
     pub gpus: Vec<KubernetesGpu>,
     #[serde(default = "default_gpu_memory_margin_factor")]
     pub gpu_memory_margin_factor: f64,
@@ -209,6 +210,10 @@ impl KubernetesConf {
                 .and_then(|ms| ms.pvc_name.as_ref())
                 .unwrap_or(&self.pvc_name)
                 .clone(),
+            cache_pvc_name: model_specific
+                .and_then(|ms| ms.cache_pvc_name.as_ref())
+                .or(self.cache_pvc_name.as_ref())
+                .cloned(),
             gpus: model_specific
                 .and_then(|ms| ms.gpus.as_ref())
                 .unwrap_or(&self.gpus)
@@ -247,6 +252,7 @@ pub struct KubernetesToleration {
 #[derive(Deserialize, Debug)]
 pub struct KubernetesModel {
     pub pvc_name: Option<String>,
+    pub cache_pvc_name: Option<String>,
     pub gpus: Option<Vec<KubernetesGpu>>,
     pub gpu_memory_margin_factor: Option<f64>,
     pub additional_node_selector: Option<HashMap<String, String>>,
