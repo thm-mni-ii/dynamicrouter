@@ -129,6 +129,12 @@ fn extract_models(
     Ok(models)
 }
 
+fn replace_model(body: &serde_json::Value, model: &ModelRef) -> serde_json::Value {
+    let mut body = body.clone();
+    body["model"] = json!(model.get_hf_id());
+    body
+}
+
 async fn generate(
     generation_type: GenerationType,
     authorization: Authorization<'_>,
@@ -138,8 +144,9 @@ async fn generate(
 
     let mut result = Err(StatusCode::BAD_REQUEST);
     for model in models {
+        let body = replace_model(&body.0, &model);
         match get_handler()
-            .generate(generation_type, &model, &body.0)
+            .generate(generation_type, &model, &body)
             .await
         {
             Ok(res) => {
