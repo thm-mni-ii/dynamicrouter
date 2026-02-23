@@ -79,6 +79,14 @@ impl ModelRef {
     pub fn get_hf_id(&self) -> String {
         format!("{}/{}", self.org, self.repo)
     }
+    pub fn get_hf_id_with_path(&self) -> String {
+        let hf_id = self.get_hf_id();
+        if let Some(path) = &self.path {
+            format!("{hf_id}/{path}")
+        } else {
+            hf_id
+        }
+    }
     pub fn get_quant(&self) -> QuantType {
         self.quant
             .or(self.quant_inferred)

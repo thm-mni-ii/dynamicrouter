@@ -1,4 +1,5 @@
 use crate::config::{BackendGlobalConf, BackendModelConfigMap, BackendUseFor};
+use crate::handlers::spawner::backends::common::get_gguf_download_command;
 use crate::handlers::spawner::backends::{Backend, common};
 use crate::utils::{ModelRef, QuantType};
 use std::collections::HashMap;
@@ -45,19 +46,28 @@ impl Backend for SglangBackend {
     }
 
     fn get_args(&self, model: &ModelRef, gpu_count: u8) -> Vec<String> {
-        let mut args = vec![
+        let mut args = if let QuantType::Gguf(_) = model.get_quant() {
+            get_gguf_download_command(model)
+        } else {
+            Vec::new()
+        };
+        args.append(&mut vec![
             "python3".to_string(),
             "-m".to_string(),
             "sglang.launch_server".to_string(),
             "--model-path".to_string(),
-            model.get_hf_id(),
+            if matches!(model.get_quant(), QuantType::Gguf(_)) {
+                format!("$MODEL_PATH/{}", model.path.clone().unwrap_or_default())
+            } else {
+                model.get_hf_id_with_path()
+            },
             "--tp".to_string(),
             gpu_count.to_string(),
             "--host".to_string(),
             "0.0.0.0".to_string(),
             "--port".to_string(),
             "80".to_string(),
-        ];
+        ]);
 
         if let Some(rev) = &model.rev {
             args.append(&mut vec!["--revision".to_string(), rev.to_string()]);
@@ -95,7 +105,14 @@ impl Backend for SglangBackend {
         }
         args.append(&mut model_config.arguments.clone());
 
-        args
+        match model.get_quant() {
+            QuantType::Gguf(_) => vec![
+                "bash".to_string(),
+                "-c".to_string(),
+                format!("{}", args.join(" ")),
+            ],
+            _ => args,
+        }
     }
 
     fn get_entrypoint(&self, _model: &ModelRef) -> Option<Vec<String>> {

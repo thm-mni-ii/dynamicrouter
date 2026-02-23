@@ -1,4 +1,5 @@
 use crate::config::{BackendGlobalConf, BackendModelConfigMap, BackendUseFor};
+use crate::handlers::spawner::backends::common::get_gguf_download_command;
 use crate::handlers::spawner::backends::{Backend, common};
 use crate::utils::{ModelRef, QuantType};
 use std::collections::HashMap;
@@ -45,31 +46,23 @@ impl Backend for VllmBackend {
     }
 
     fn get_args(&self, model: &ModelRef, gpu_count: u8) -> Vec<String> {
-        let mut args = vec![
-            "--port".to_string(),
-            "80".to_string(),
-            "--tensor-parallel-size".to_string(),
-            gpu_count.to_string(),
-        ];
-        if let QuantType::Gguf(_) = model.get_quant() {
+        let mut args = if let QuantType::Gguf(_) = model.get_quant() {
+            let mut args = get_gguf_download_command(model);
             args.append(&mut vec![
-                "export".to_string(),
-                "MODEL_PATH=$(huggingface-cli".to_string(),
-                "download".to_string(),
-                model.get_hf_id(),
-                "--include".to_string(),
-                format!("{})", model.path.clone().unwrap_or_default()),
-            ]);
-            if let Some(rev) = &model.rev {
-                args.append(&mut vec!["--revision".to_string(), rev.to_string()]);
-            }
-            args.append(&mut vec![
-                "&&".to_string(),
                 "python3".to_string(),
                 "-m".to_string(),
                 "vllm.entrypoints.openai.api_server".to_string(),
             ]);
-        }
+            args
+        } else {
+            Vec::new()
+        };
+        args.append(&mut vec![
+            "--port".to_string(),
+            "80".to_string(),
+            "--tensor-parallel-size".to_string(),
+            gpu_count.to_string(),
+        ]);
 
         args.append(&mut vec![match &model.get_quant() {
             QuantType::Gguf(_) => {
