@@ -1,10 +1,12 @@
 mod common;
 mod llama_cpp;
+mod sglang;
 mod tgi;
 mod vllm;
 
 use crate::config::{BackendConf, CONFIG, Handler, SpawnerModelHandlerConfig};
 use crate::handlers::spawner::backends::llama_cpp::LlamaCppBackend;
+use crate::handlers::spawner::backends::sglang::SglangBackend;
 use crate::handlers::spawner::backends::tgi::TgiBackend;
 use crate::handlers::spawner::backends::vllm::VllmBackend;
 use crate::utils::ModelRef;
@@ -26,6 +28,9 @@ pub static BACKEND: Lazy<Vec<DynBackend>> = Lazy::new(|| {
                 }
                 BackendConf::Vllm(backend_image_conf) => {
                     Arc::new(VllmBackend::new(id, backend_image_conf))
+                }
+                BackendConf::Sglang(backend_image_conf) => {
+                    Arc::new(SglangBackend::new(id, backend_image_conf))
                 }
                 BackendConf::LlamaCpp(backend_image_conf) => {
                     Arc::new(LlamaCppBackend::new(id, backend_image_conf))
@@ -51,10 +56,12 @@ pub fn get_first_supported_backend(model: &ModelRef) -> Result<DynBackend, Backe
         debug!("{model} limits backends to {per_model_backends:?}");
         backend_iter =
             Box::new(backend_iter.filter(|backend| per_model_backends.contains(&backend.get_id())));
+    } else {
+        backend_iter = Box::new(backend_iter.filter(|backend| backend.should_be_used_for(model)));
     }
 
     backend_iter
-        .find(|backend| backend.should_be_used_for(model))
+        .next()
         .cloned()
         .ok_or(BackendError::NoSupportedBackedFound())
 }

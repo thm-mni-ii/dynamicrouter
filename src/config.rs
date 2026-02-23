@@ -268,6 +268,8 @@ pub enum BackendConf {
     Vllm(BackendGlobalConf),
     #[serde(rename = "llama_cpp")]
     LlamaCpp(BackendGlobalConf),
+    #[serde(rename = "sglang")]
+    Sglang(BackendGlobalConf),
 }
 
 #[derive(Deserialize, Debug)]

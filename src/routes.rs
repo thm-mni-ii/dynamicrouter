@@ -145,10 +145,7 @@ async fn generate(
     let mut result = Err(StatusCode::BAD_REQUEST);
     for model in models {
         let body = replace_model(&body.0, &model);
-        match get_handler()
-            .generate(generation_type, &model, &body)
-            .await
-        {
+        match get_handler().generate(generation_type, &model, &body).await {
             Ok(res) => {
                 result = Ok(res);
             }
