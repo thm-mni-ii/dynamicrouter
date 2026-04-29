@@ -69,10 +69,7 @@ impl Backend for LlamaCppBackend {
     }
 
     fn get_mount(&self, _model: &ModelRef) -> (String, String) {
-        (
-            "llama.cpp".to_string(),
-            "/root/.cache/llama.cpp/".to_string(),
-        )
+        ("models".to_string(), "/models".to_string())
     }
 
     fn get_cache_mount(&self, _model: &ModelRef) -> Option<(String, String)> {
