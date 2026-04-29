@@ -96,6 +96,7 @@ impl Handler for SpawnerHandler {
         generation_type: GenerationType,
         model: &ModelRef,
         request: &Value,
+        username: &str,
     ) -> Result<ModelResponse, anyhow::Error> {
         let model_name = model.to_string();
         let config = get_model_config_by_name(&model_name)?;
@@ -134,7 +135,7 @@ impl Handler for SpawnerHandler {
                 })?;
             self.model_factory.restore(&instance.data).await?
         };
-        let request_id = create_request(&model_name, dyn_model.id().await).await?;
+        let request_id = create_request(&model_name, dyn_model.id().await, username).await?;
         drop(_lock_guard);
 
         let model = RetryingModel::new_dyn(dyn_model);

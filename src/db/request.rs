@@ -23,13 +23,18 @@ pub async fn latest_for_each_model() -> Result<Vec<Request>, anyhow::Error> {
         .await?)
 }
 
-pub async fn create_request(model: &str, instance: &str) -> Result<String, anyhow::Error> {
+pub async fn create_request(
+    model: &str,
+    instance: &str,
+    user: &str,
+) -> Result<String, anyhow::Error> {
     let id = Uuid::new_v4().to_string();
     sqlx::query!(
-        "INSERT INTO request (id, model, enqueue, instance) VALUES (?, ?, unixepoch(), ?)",
+        "INSERT INTO request (id, model, enqueue, instance, user) VALUES (?, ?, unixepoch(), ?, ?)",
         id,
         model,
-        instance
+        instance,
+        user
     )
     .execute(get_executor())
     .await?;

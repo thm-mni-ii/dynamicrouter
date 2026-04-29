@@ -39,6 +39,7 @@ pub trait Handler: Send + Sync {
         generation_type: GenerationType,
         model: &ModelRef,
         request: &Value,
+        username: &str,
     ) -> Result<ModelResponse, anyhow::Error>;
 }
 
@@ -63,12 +64,13 @@ impl Handler for RoutingHandler {
         generation_type: GenerationType,
         model: &ModelRef,
         request: &Value,
+        username: &str,
     ) -> Result<ModelResponse, Error> {
         let model_conf = get_model_config(model)?;
         match model_conf.handler {
             config::Handler::Spawner { .. } => {
                 self.default_handler
-                    .generate(generation_type, model, request)
+                    .generate(generation_type, model, request, username)
                     .await
             }
         }
