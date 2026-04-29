@@ -9,7 +9,7 @@ pub fn get_environment(additional: HashMap<String, String>) -> HashMap<String, S
             .huggingface
             .token
             .as_ref()
-            .map(|ht| ("HF_TOKEN".to_string(), ht.expose_secret().to_string())),
+            .map(|ht| ("HF_TOKEN".to_string(), ht.expose_secret().clone())),
         Some(("HF_HOME".to_string(), "/models".to_string())),
     ]
     .into_iter()
@@ -29,7 +29,7 @@ pub fn get_gguf_download_command(model: &ModelRef) -> Vec<String> {
         format!("{})", model.path.clone().unwrap_or_default()),
     ]);
     if let Some(rev) = &model.rev {
-        args.append(&mut vec!["--revision".to_string(), rev.to_string()]);
+        args.append(&mut vec!["--revision".to_string(), rev.clone()]);
     }
     args.push("&&".to_string());
     args

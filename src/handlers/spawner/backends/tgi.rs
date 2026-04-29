@@ -46,7 +46,7 @@ impl Backend for TgiBackend {
         args.append(&mut vec!["--model-id".to_string(), model.get_hf_id()]);
 
         if let Some(rev) = &model.rev {
-            args.append(&mut vec!["--revision".to_string(), rev.to_string()]);
+            args.append(&mut vec!["--revision".to_string(), rev.clone()]);
         }
 
         match &model.get_quant() {

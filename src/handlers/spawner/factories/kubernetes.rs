@@ -100,7 +100,7 @@ impl ModelFactory for KubernetesModelFactory {
         if let Some(additional_node_selector) = &config.additional_node_selector {
             let node_selector_obj = node_selector.as_object_mut().unwrap();
             for (key, value) in additional_node_selector {
-                node_selector_obj.insert(key.to_string(), json!(value));
+                node_selector_obj.insert(key.clone(), json!(value));
             }
         }
 

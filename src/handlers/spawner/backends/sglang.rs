@@ -70,7 +70,7 @@ impl Backend for SglangBackend {
         ]);
 
         if let Some(rev) = &model.rev {
-            args.append(&mut vec!["--revision".to_string(), rev.to_string()]);
+            args.append(&mut vec!["--revision".to_string(), rev.clone()]);
         }
 
         match &model.get_quant() {
