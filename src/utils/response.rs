@@ -10,6 +10,7 @@ pub struct ModelResponse {
     pub status: StatusCode,
     pub content_type: Option<String>,
     pub content_length: Option<u64>,
+    pub request_id: Option<String>,
     pub body: ModelStream,
 }
 
@@ -22,6 +23,10 @@ impl IntoResponse for ModelResponse {
         };
         builder = match self.content_length {
             Some(cl) => builder.header(header::CONTENT_LENGTH, cl),
+            None => builder,
+        };
+        builder = match self.request_id {
+            Some(rid) => builder.header("x-request-id", rid),
             None => builder,
         };
 

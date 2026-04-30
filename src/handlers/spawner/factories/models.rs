@@ -160,6 +160,7 @@ impl HttpModel {
                 .get("Content-Type")
                 .map(|ct| ct.to_str().unwrap().to_string()),
             content_length: res.content_length(),
+            request_id: None,
             body: Box::new(StreamAdapter::new(res.bytes_stream())),
         })
     }
