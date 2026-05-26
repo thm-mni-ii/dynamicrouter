@@ -18,6 +18,7 @@
       sharedNativeDeps =
         pkgs: with pkgs; [
           sqlx-cli
+          sqlite
         ];
     in
     {
@@ -81,7 +82,11 @@
               name = "dynamicrouter";
               tag = "latest";
 
-              contents = [ dynamicrouterPackage ];
+              contents = [
+                dynamicrouterPackage
+                pkgs.bash
+              ]
+              ++ sharedNativeDeps pkgs;
 
               config = {
                 Cmd = [
