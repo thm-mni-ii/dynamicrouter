@@ -84,7 +84,6 @@
 
               contents = [
                 dynamicrouterPackage
-                pkgs.bash
               ]
               ++ sharedNativeDeps pkgs;
 
