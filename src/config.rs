@@ -15,6 +15,9 @@ fn default_timeout() -> u32 {
 fn default_retry_interval() -> u32 {
     60
 }
+fn default_log_request_body() -> bool {
+    false
+}
 fn default_gpu_memory_margin_factor() -> f64 {
     1.2
 }
@@ -52,6 +55,8 @@ pub struct Conf {
     pub model_timeout: u32,
     #[serde(default = "default_retry_interval")]
     pub model_retry_interval: u32,
+    #[serde(default = "default_log_request_body")]
+    pub log_request_body: bool,
     pub huggingface: HuggingfaceConf,
     pub factory: FactoryConf,
     pub backends: HashMap<String, BackendConf>,
@@ -100,6 +105,7 @@ impl Handler {
 pub struct User {
     pub token_hashes: HashSet<String>,
     pub limit_to_models: Option<HashSet<String>>,
+    pub log_request_body: Option<bool>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -351,4 +357,13 @@ pub struct ModelNotFoundError {
 #[derive(Deserialize, Debug)]
 pub struct Alias {
     pub to: String,
+}
+
+impl Conf {
+    pub fn should_log_request_body_for_user(&self, username: &str) -> bool {
+        self.users
+            .get(username)
+            .and_then(|u| u.log_request_body)
+            .unwrap_or(self.log_request_body)
+    }
 }

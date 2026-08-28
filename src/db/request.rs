@@ -2,7 +2,7 @@ use crate::db::connection::get_executor;
 use uuid::Uuid;
 
 #[derive(sqlx::FromRow, Debug)]
-#[allow(unused,clippy::struct_field_names)]
+#[allow(unused, clippy::struct_field_names)]
 pub struct Request {
     pub id: String,
     pub model: String,
@@ -30,10 +30,10 @@ pub async fn create_request(
     model: &str,
     instance: &str,
     user: &str,
-    request_body: &serde_json::Value,
+    request_body: Option<&serde_json::Value>,
 ) -> Result<String, anyhow::Error> {
     let id = Uuid::new_v4().to_string();
-    let body_str = serde_json::to_string(request_body)?;
+    let body_str = request_body.map(serde_json::to_string).transpose()?;
     sqlx::query!(
         "INSERT INTO request (id, model, enqueue, instance, user, request_body) VALUES (?, ?, unixepoch(), ?, ?, ?)",
         id,

@@ -162,8 +162,13 @@ impl Handler for SpawnerHandler {
                 })?;
             self.model_factory.restore(&instance.data).await?
         };
+        let request_body = if CONFIG.should_log_request_body_for_user(username) {
+            Some(request)
+        } else {
+            None
+        };
         let request_id =
-            create_request(&model_name, dyn_model.id().await, username, request).await?;
+            create_request(&model_name, dyn_model.id().await, username, request_body).await?;
         drop(_lock_guard);
 
         let model = RetryingModel::new_dyn(dyn_model);
