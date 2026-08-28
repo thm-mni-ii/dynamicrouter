@@ -262,7 +262,7 @@ impl KubernetesResolvingModel {
         let _ = self.parent.set(HttpModel::new_dyn(
             self.id.clone(),
             self.name.clone(),
-            format!("http://{ip}",).parse()?,
+            format!("http://{ip}").parse()?,
             None,
         ));
 

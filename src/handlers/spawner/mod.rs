@@ -212,7 +212,7 @@ impl Handler for SpawnerHandler {
                 e
             );
             if let Err(e) = self.model_factory.destroy(model).await {
-                error!("error while destroying non retryable model {model_id}: {e}",);
+                error!("error while destroying non retryable model {model_id}: {e}");
             }
             delete_instance(&model_id).await?;
         }
@@ -243,7 +243,7 @@ pub async fn start_background_auto_clean(sh: Arc<SpawnerHandler>) {
                     error!("Error while auto cleaning: {err}");
                 }
             }
-            sleep(Duration::from_secs(60)).await;
+            sleep(Duration::from_mins(1)).await;
         }
     });
 }
