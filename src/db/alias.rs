@@ -16,7 +16,10 @@ pub async fn resolve_alias(alias: &str) -> Result<Option<String>, anyhow::Error>
     Ok(row)
 }
 
-#[allow(dead_code)]
+pub async fn get_alias(alias: &str) -> Result<Option<String>, anyhow::Error> {
+    resolve_alias(alias).await
+}
+
 pub async fn get_all_aliases() -> Result<HashMap<String, String>, anyhow::Error> {
     let rows = sqlx::query_as::<_, AliasRow>("SELECT alias, target FROM aliases ORDER BY alias")
         .fetch_all(get_executor())
@@ -42,4 +45,12 @@ pub async fn create_alias(alias: &str, target: &str) -> Result<(), anyhow::Error
     .execute(get_executor())
     .await?;
     Ok(())
+}
+
+pub async fn delete_alias(alias: &str) -> Result<bool, anyhow::Error> {
+    let res = sqlx::query("DELETE FROM aliases WHERE alias = ?")
+        .bind(alias)
+        .execute(get_executor())
+        .await?;
+    Ok(res.rows_affected() > 0)
 }

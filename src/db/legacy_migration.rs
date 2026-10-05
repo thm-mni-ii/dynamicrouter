@@ -325,6 +325,7 @@ pub async fn check_and_migrate_legacy_config() -> Result<(), anyhow::Error> {
             username,
             user.limit_to_models.as_ref(),
             user.log_request_body,
+            true,
         )
         .await?;
         for hash in &user.token_hashes {

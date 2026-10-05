@@ -1,5 +1,6 @@
 use once_cell::sync::Lazy;
 use secrecy::SecretBox;
+use std::collections::HashSet;
 use std::env;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,9 +34,19 @@ pub struct EnvConfig {
     pub kubernetes_pvc_name: String,
     pub kubernetes_cache_pvc_name: Option<String>,
     pub kubernetes_gpu_memory_margin_factor: f64,
+    pub oidc_issuer_url: Option<String>,
+    pub oidc_discovery_url: Option<String>,
+    pub oidc_client_id: Option<String>,
+    pub oidc_client_secret: Option<SecretBox<String>>,
+    pub oidc_redirect_uri: Option<String>,
+    pub oidc_scopes: String,
+    pub oidc_admin_users: HashSet<String>,
+    pub oidc_admin_roles: HashSet<String>,
+    pub oidc_enabled: bool,
 }
 
 impl EnvConfig {
+    #[allow(clippy::too_many_lines)]
     pub fn from_env() -> Self {
         let port = env::var("PORT")
             .ok()
@@ -129,6 +140,54 @@ impl EnvConfig {
             .and_then(|f| f.parse().ok())
             .unwrap_or(1.2);
 
+        let oidc_issuer_url = env::var("OIDC_ISSUER_URL")
+            .or_else(|_| env::var("OIDC_ISSUER"))
+            .ok();
+
+        let oidc_discovery_url = env::var("OIDC_DISCOVERY_URL").ok();
+
+        let oidc_client_id = env::var("OIDC_CLIENT_ID")
+            .or_else(|_| env::var("OIDC_ID"))
+            .ok();
+
+        let oidc_client_secret = env::var("OIDC_CLIENT_SECRET")
+            .or_else(|_| env::var("OIDC_SECRET"))
+            .ok()
+            .map(|s| SecretBox::new(Box::new(s)));
+
+        let oidc_redirect_uri = env::var("OIDC_REDIRECT_URI").ok();
+
+        let oidc_scopes = env::var("OIDC_SCOPES")
+            .unwrap_or_else(|_| "openid profile email".to_string());
+
+        let oidc_admin_users = env::var("OIDC_ADMIN_USERS")
+            .or_else(|_| env::var("INITIAL_ADMIN_USERS"))
+            .or_else(|_| env::var("ADMIN_USERS"))
+            .map(|s| {
+                s.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_default();
+
+        let oidc_admin_roles = env::var("OIDC_ADMIN_ROLES")
+            .or_else(|_| env::var("ADMIN_ROLES"))
+            .map(|s| {
+                s.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_default();
+
+        let oidc_enabled = env::var("OIDC_ENABLED").map_or_else(
+            |_| oidc_issuer_url.is_some() || oidc_discovery_url.is_some() || oidc_client_id.is_some(),
+            |v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"),
+        );
+
         EnvConfig {
             port,
             host,
@@ -147,11 +206,24 @@ impl EnvConfig {
             kubernetes_pvc_name,
             kubernetes_cache_pvc_name,
             kubernetes_gpu_memory_margin_factor,
+            oidc_issuer_url,
+            oidc_discovery_url,
+            oidc_client_id,
+            oidc_client_secret,
+            oidc_redirect_uri,
+            oidc_scopes,
+            oidc_admin_users,
+            oidc_admin_roles,
+            oidc_enabled,
         }
     }
 
     pub fn should_log_request_body_for_user(&self, user_override: Option<bool>) -> bool {
         user_override.unwrap_or(self.log_request_body)
+    }
+
+    pub fn is_user_admin_by_config(&self, username: &str) -> bool {
+        self.oidc_admin_users.contains(username)
     }
 }
 

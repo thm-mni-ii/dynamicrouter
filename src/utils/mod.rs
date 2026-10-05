@@ -254,6 +254,7 @@ impl ByteSize {
     }
 
     #[inline]
+    #[must_use]
     pub fn factor(self, factor: f64) -> ByteSize {
         ByteSize::from_bytes((self.0 as f64 * factor).ceil() as u64)
     }

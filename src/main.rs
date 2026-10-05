@@ -6,23 +6,19 @@
 #![allow(clippy::enum_variant_names)]
 #![allow(clippy::match_wildcard_for_single_variants)]
 
-mod config;
-mod db;
-mod handlers;
-mod routes;
-mod runtime;
-mod ui;
-mod utils;
-
-use crate::config::{CONFIG, TlsConfig};
-use crate::handlers::init_handlers;
-use crate::runtime::RUNTIME;
-use crate::ui::new_static_router;
 use axum::Router;
 use axum::routing::{get, post};
 use axum_server::tls_rustls::RustlsConfig;
-use db::connection::init_db;
-use log::{LevelFilter, debug, error, info};
+use dynamicrouter::api::api_routes;
+use dynamicrouter::api::metrics::prometheus_metrics;
+use dynamicrouter::auth::auth_routes;
+use dynamicrouter::config::{CONFIG, TlsConfig};
+use dynamicrouter::db::connection::init_db;
+use dynamicrouter::handlers::init_handlers;
+use dynamicrouter::routes;
+use dynamicrouter::runtime::RUNTIME;
+use dynamicrouter::ui::new_static_router;
+use log::{debug, error, info, LevelFilter};
 use rustls::crypto::ring;
 use std::process::exit;
 use std::time::Duration;
@@ -48,7 +44,10 @@ async fn async_main() {
         .merge(new_static_router())
         .route("/v1/chat/completions", post(routes::completions))
         .route("/v1/embeddings", post(routes::embeddings))
-        .route("/v1/models", get(routes::models));
+        .route("/v1/models", get(routes::models))
+        .nest("/auth", auth_routes())
+        .nest("/api", api_routes())
+        .route("/metrics", get(prometheus_metrics));
 
     let host = &CONFIG.host;
     let port = CONFIG.port;

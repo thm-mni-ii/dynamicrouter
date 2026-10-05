@@ -1,9 +1,10 @@
 use crate::config::CONFIG;
 use crate::fatal;
 use once_cell::sync::OnceCell;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::{Pool, Sqlite};
 use std::str::FromStr;
+use std::time::Duration;
 
 pub static DB: OnceCell<Db> = OnceCell::new();
 
@@ -48,10 +49,12 @@ impl Db {
         } else {
             SqliteConnectOptions::from_str(&format!("sqlite://{db_url}"))?
         }
-        .create_if_missing(true);
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(Duration::from_secs(10));
 
         let pool = SqlitePoolOptions::new()
-            .max_connections(5)
+            .max_connections(10)
             .connect_with(connect_opts)
             .await?;
 

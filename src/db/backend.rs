@@ -15,7 +15,7 @@ impl BackendUseFor {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendRecord {
     pub id: String,
     pub backend_type: String,
@@ -23,8 +23,7 @@ pub struct BackendRecord {
     pub use_for: BackendUseFor,
 }
 
-#[derive(Debug, Clone, Default)]
-#[allow(dead_code)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BackendModelRecord {
     pub backend_id: String,
     pub model: String,
@@ -100,7 +99,6 @@ pub async fn get_all_backends() -> Result<Vec<BackendRecord>, anyhow::Error> {
     Ok(rows.into_iter().map(BackendRow::into_record).collect())
 }
 
-#[allow(dead_code)]
 pub async fn get_backend(id: &str) -> Result<Option<BackendRecord>, anyhow::Error> {
     let row = sqlx::query_as::<_, BackendRow>(
         r"
@@ -114,6 +112,46 @@ pub async fn get_backend(id: &str) -> Result<Option<BackendRecord>, anyhow::Erro
     .await?;
 
     Ok(row.map(BackendRow::into_record))
+}
+
+pub async fn delete_backend(id: &str) -> Result<bool, anyhow::Error> {
+    let res = sqlx::query("DELETE FROM backends WHERE id = ?")
+        .bind(id)
+        .execute(get_executor())
+        .await?;
+    Ok(res.rows_affected() > 0)
+}
+
+pub async fn get_all_backend_model_configs() -> Result<Vec<BackendModelRecord>, anyhow::Error> {
+    let rows = sqlx::query_as::<_, BackendModelRow>(
+        r"
+        SELECT backend_id, model, arguments, environment_variables, ctx_length
+        FROM backend_model_configs
+        ORDER BY backend_id, model
+        ",
+    )
+    .fetch_all(get_executor())
+    .await?;
+
+    Ok(rows.into_iter().map(BackendModelRow::into_record).collect())
+}
+
+pub async fn get_backend_models(
+    backend_id: &str,
+) -> Result<Vec<BackendModelRecord>, anyhow::Error> {
+    let rows = sqlx::query_as::<_, BackendModelRow>(
+        r"
+        SELECT backend_id, model, arguments, environment_variables, ctx_length
+        FROM backend_model_configs
+        WHERE backend_id = ?
+        ORDER BY model
+        ",
+    )
+    .bind(backend_id)
+    .fetch_all(get_executor())
+    .await?;
+
+    Ok(rows.into_iter().map(BackendModelRow::into_record).collect())
 }
 
 pub async fn get_backend_model_config(
@@ -191,4 +229,18 @@ pub async fn create_backend_model_config(
     .execute(get_executor())
     .await?;
     Ok(())
+}
+
+pub async fn delete_backend_model_config(
+    backend_id: &str,
+    model: &str,
+) -> Result<bool, anyhow::Error> {
+    let res = sqlx::query(
+        "DELETE FROM backend_model_configs WHERE backend_id = ? AND model = ?",
+    )
+    .bind(backend_id)
+    .bind(model)
+    .execute(get_executor())
+    .await?;
+    Ok(res.rows_affected() > 0)
 }

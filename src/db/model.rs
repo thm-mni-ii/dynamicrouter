@@ -1,9 +1,10 @@
 use crate::db::connection::get_executor;
-use secrecy::SecretBox;
+use secrecy::{ExposeSecret, SecretBox};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use url::Url;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfig {
     pub id: String,
     pub name: Option<String>,
@@ -13,9 +14,12 @@ pub struct ModelConfig {
     pub handler: ModelHandlerConfig,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum ModelHandlerConfig {
+    #[serde(rename = "spawner")]
     Spawner(SpawnerHandlerConfig),
+    #[serde(rename = "openai")]
     OpenAi(OpenAiHandlerConfig),
 }
 
@@ -36,12 +40,23 @@ impl ModelHandlerConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpawnerHandlerConfig {
     pub backends: Option<HashSet<String>>,
+    #[serde(default)]
     pub min_scale: u32,
+    #[serde(default = "default_max_scale")]
     pub max_scale: u32,
+    #[serde(default = "default_queue_len")]
     pub queue_length_for_scale_up: u32,
+}
+
+fn default_max_scale() -> u32 {
+    1
+}
+
+fn default_queue_len() -> u32 {
+    1
 }
 
 impl Default for SpawnerHandlerConfig {
@@ -55,10 +70,38 @@ impl Default for SpawnerHandlerConfig {
     }
 }
 
-#[derive(Debug, Default)]
+pub mod secret_serde {
+    use secrecy::{ExposeSecret, SecretBox};
+    use serde::{Deserializer, Serializer};
+
+    #[allow(clippy::ref_option)]
+    pub fn serialize<S>(
+        secret: &Option<SecretBox<String>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match secret {
+            Some(s) => serializer.serialize_some(s.expose_secret()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<SecretBox<String>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt: Option<String> = serde::Deserialize::deserialize(deserializer)?;
+        Ok(opt.map(|s| SecretBox::new(Box::new(s))))
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct OpenAiHandlerConfig {
     pub api: Option<String>,
     pub url: Option<Url>,
+    #[serde(default, with = "secret_serde")]
     pub token: Option<SecretBox<String>>,
     pub model: Option<String>,
     pub timeout: Option<u32>,
@@ -67,7 +110,6 @@ pub struct OpenAiHandlerConfig {
 
 impl Clone for OpenAiHandlerConfig {
     fn clone(&self) -> Self {
-        use secrecy::ExposeSecret;
         OpenAiHandlerConfig {
             api: self.api.clone(),
             url: self.url.clone(),
@@ -256,7 +298,6 @@ pub async fn create_model(model: &ModelConfig) -> Result<(), anyhow::Error> {
             .await?;
         }
         ModelHandlerConfig::OpenAi(openai) => {
-            use secrecy::ExposeSecret;
             let url_str = openai.url.as_ref().map(ToString::to_string);
             let token_str = openai.token.as_ref().map(|t| t.expose_secret().clone());
             let headers_str = openai
@@ -302,4 +343,12 @@ pub async fn create_model(model: &ModelConfig) -> Result<(), anyhow::Error> {
         }
     }
     Ok(())
+}
+
+pub async fn delete_model(model_id: &str) -> Result<bool, anyhow::Error> {
+    let res = sqlx::query("DELETE FROM models WHERE id = ?")
+        .bind(model_id)
+        .execute(get_executor())
+        .await?;
+    Ok(res.rows_affected() > 0)
 }

@@ -88,12 +88,27 @@ pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusC
 }
 
 pub async fn check_token(token: &str) -> Option<User> {
+    if let Some(session) = crate::auth::session::SESSIONS.get_session(token).await {
+        if let Ok(Some(user)) = crate::db::user::get_user_by_username(&session.username).await {
+            return Some(user);
+        }
+        return Some(User {
+            username: session.username,
+            limit_to_models: None,
+            log_request_body: None,
+            is_admin: session.is_admin,
+        });
+    }
+
     let mut hasher = sha2::Sha256::new();
     hasher.update(token.as_bytes());
-    let hash = hasher.finalize();
-    let encoded = hex::encode(hash);
+    let hash = hex::encode(hasher.finalize());
 
-    get_user_by_token_hash(&encoded).await.ok().flatten()
+    if let Ok(Some(user)) = get_user_by_token_hash(&hash).await {
+        return Some(user);
+    }
+
+    get_user_by_token_hash(token).await.ok().flatten()
 }
 
 pub struct Authorization {

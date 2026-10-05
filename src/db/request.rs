@@ -1,8 +1,10 @@
 use crate::db::connection::get_executor;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(sqlx::FromRow, Debug)]
-#[allow(unused, clippy::struct_field_names)]
+#[derive(sqlx::FromRow, Debug, Clone, Serialize, Deserialize)]
+#[allow(clippy::struct_field_names)]
 pub struct Request {
     pub id: String,
     pub model: String,
@@ -10,8 +12,76 @@ pub struct Request {
     pub done: Option<i64>,
     pub instance: String,
     pub user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub request_body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub response_body: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RequestFilter {
+    pub model: Option<String>,
+    pub user: Option<String>,
+    pub instance: Option<String>,
+    pub status: Option<String>,
+    pub from: Option<i64>,
+    pub to: Option<i64>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+    pub include_bodies: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaginatedRequests {
+    pub items: Vec<Request>,
+    pub total: i64,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsSummary {
+    pub total_requests: i64,
+    pub pending_requests: i64,
+    pub completed_requests: i64,
+    pub active_instances: i64,
+    pub avg_duration_secs: Option<f64>,
+    pub p50_duration_secs: Option<f64>,
+    pub p90_duration_secs: Option<f64>,
+    pub p95_duration_secs: Option<f64>,
+    pub p99_duration_secs: Option<f64>,
+    pub requests_last_1m: i64,
+    pub requests_last_5m: i64,
+    pub requests_last_1h: i64,
+    pub requests_last_24h: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelMetrics {
+    pub model: String,
+    pub total_requests: i64,
+    pub pending_requests: i64,
+    pub completed_requests: i64,
+    pub avg_duration_secs: Option<f64>,
+    pub active_instances: i64,
+    pub last_request_enqueue: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserMetrics {
+    pub user: String,
+    pub total_requests: i64,
+    pub pending_requests: i64,
+    pub completed_requests: i64,
+    pub avg_duration_secs: Option<f64>,
+    pub last_request_enqueue: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeseriesPoint {
+    pub timestamp: i64,
+    pub request_count: i64,
+    pub avg_duration_secs: Option<f64>,
 }
 
 pub async fn count_pending_requests_for(model: &str) -> Result<i64, anyhow::Error> {
@@ -68,4 +138,341 @@ pub async fn save_response_body(id: &str, body: &str) -> Result<(), anyhow::Erro
         .execute(get_executor())
         .await?;
     Ok(())
+}
+
+pub async fn get_request_by_id(id: &str) -> Result<Option<Request>, anyhow::Error> {
+    let req = sqlx::query_as::<_, Request>(
+        "SELECT id, model, enqueue, done, instance, user, request_body, response_body FROM request WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(get_executor())
+    .await?;
+
+    Ok(req)
+}
+
+pub async fn get_requests(filter: &RequestFilter) -> Result<PaginatedRequests, anyhow::Error> {
+    let limit = filter.limit.unwrap_or(50).clamp(1, 1000);
+    let offset = filter.offset.unwrap_or(0);
+    let include_bodies = filter.include_bodies.unwrap_or(false);
+
+    let mut where_clauses = Vec::new();
+    let mut count_query = "SELECT COUNT(*) FROM request".to_string();
+
+    if let Some(ref m) = filter.model {
+        where_clauses.push(format!("model = '{}'", m.replace('\'', "''")));
+    }
+    if let Some(ref u) = filter.user {
+        where_clauses.push(format!("user = '{}'", u.replace('\'', "''")));
+    }
+    if let Some(ref inst) = filter.instance {
+        where_clauses.push(format!("instance = '{}'", inst.replace('\'', "''")));
+    }
+    if let Some(ref st) = filter.status {
+        match st.as_str() {
+            "pending" => where_clauses.push("done IS NULL".to_string()),
+            "completed" => where_clauses.push("done IS NOT NULL".to_string()),
+            _ => {}
+        }
+    }
+    if let Some(from) = filter.from {
+        where_clauses.push(format!("enqueue >= {from}"));
+    }
+    if let Some(to) = filter.to {
+        where_clauses.push(format!("enqueue <= {to}"));
+    }
+
+    let where_str = if where_clauses.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", where_clauses.join(" AND "))
+    };
+
+    count_query.push_str(&where_str);
+    let total: i64 = sqlx::query_scalar(&count_query)
+        .fetch_one(get_executor())
+        .await?;
+
+    let select_columns = if include_bodies {
+        "id, model, enqueue, done, instance, user, request_body, response_body"
+    } else {
+        "id, model, enqueue, done, instance, user, NULL AS request_body, NULL AS response_body"
+    };
+
+    let data_query = format!(
+        "SELECT {select_columns} FROM request{where_str} ORDER BY enqueue DESC LIMIT {limit} OFFSET {offset}"
+    );
+
+    let items = sqlx::query_as::<_, Request>(&data_query)
+        .fetch_all(get_executor())
+        .await?;
+
+    Ok(PaginatedRequests {
+        items,
+        total,
+        limit,
+        offset,
+    })
+}
+
+pub async fn delete_old_requests(older_than: i64) -> Result<u64, anyhow::Error> {
+    let res = sqlx::query("DELETE FROM request WHERE enqueue < ?")
+        .bind(older_than)
+        .execute(get_executor())
+        .await?;
+    Ok(res.rows_affected())
+}
+
+#[allow(clippy::similar_names)]
+pub async fn get_metrics_summary() -> Result<MetricsSummary, anyhow::Error> {
+    let now = Utc::now().timestamp();
+
+    let total_requests: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request")
+        .fetch_one(get_executor())
+        .await
+        .unwrap_or(0);
+
+    let pending_requests: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE done IS NULL")
+            .fetch_one(get_executor())
+            .await
+            .unwrap_or(0);
+
+    let completed_requests: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE done IS NOT NULL")
+            .fetch_one(get_executor())
+            .await
+            .unwrap_or(0);
+
+    let active_instances: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM instance")
+        .fetch_one(get_executor())
+        .await
+        .unwrap_or(0);
+
+    let avg_duration_secs: Option<f64> = sqlx::query_scalar(
+        "SELECT AVG(done - enqueue) FROM request WHERE done IS NOT NULL AND done >= enqueue",
+    )
+    .fetch_optional(get_executor())
+    .await
+    .unwrap_or(None);
+
+    let durations: Vec<i64> = sqlx::query_scalar(
+        "SELECT (done - enqueue) AS dur FROM request WHERE done IS NOT NULL AND done >= enqueue ORDER BY dur ASC",
+    )
+    .fetch_all(get_executor())
+    .await
+    .unwrap_or_default();
+
+    let calc_percentile = |pct: f64| -> Option<f64> {
+        if durations.is_empty() {
+            return None;
+        }
+        let rank = (pct / 100.0 * (durations.len() as f64 - 1.0)).round() as usize;
+        let idx = rank.min(durations.len() - 1);
+        Some(durations[idx] as f64)
+    };
+
+    let p50_duration_secs = calc_percentile(50.0);
+    let p90_duration_secs = calc_percentile(90.0);
+    let p95_duration_secs = calc_percentile(95.0);
+    let p99_duration_secs = calc_percentile(99.0);
+
+    let requests_last_1m: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE enqueue >= ?")
+            .bind(now - 60)
+            .fetch_one(get_executor())
+            .await
+            .unwrap_or(0);
+
+    let requests_last_5m: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE enqueue >= ?")
+            .bind(now - 300)
+            .fetch_one(get_executor())
+            .await
+            .unwrap_or(0);
+
+    let requests_last_1h: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE enqueue >= ?")
+            .bind(now - 3600)
+            .fetch_one(get_executor())
+            .await
+            .unwrap_or(0);
+
+    let requests_last_24h: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE enqueue >= ?")
+            .bind(now - 86400)
+            .fetch_one(get_executor())
+            .await
+            .unwrap_or(0);
+
+    Ok(MetricsSummary {
+        total_requests,
+        pending_requests,
+        completed_requests,
+        active_instances,
+        avg_duration_secs,
+        p50_duration_secs,
+        p90_duration_secs,
+        p95_duration_secs,
+        p99_duration_secs,
+        requests_last_1m,
+        requests_last_5m,
+        requests_last_1h,
+        requests_last_24h,
+    })
+}
+
+#[derive(sqlx::FromRow)]
+struct ModelMetricsRow {
+    model: String,
+    total_requests: i64,
+    pending_requests: i64,
+    completed_requests: i64,
+    avg_duration: Option<f64>,
+    last_enqueue: Option<i64>,
+}
+
+pub async fn get_model_metrics() -> Result<Vec<ModelMetrics>, anyhow::Error> {
+    let rows = sqlx::query_as::<_, ModelMetricsRow>(
+        r"
+        SELECT
+            model,
+            COUNT(*) AS total_requests,
+            SUM(CASE WHEN done IS NULL THEN 1 ELSE 0 END) AS pending_requests,
+            SUM(CASE WHEN done IS NOT NULL THEN 1 ELSE 0 END) AS completed_requests,
+            AVG(CASE WHEN done IS NOT NULL AND done >= enqueue THEN (done - enqueue) ELSE NULL END) AS avg_duration,
+            MAX(enqueue) AS last_enqueue
+        FROM request
+        GROUP BY model
+        ORDER BY total_requests DESC
+        ",
+    )
+    .fetch_all(get_executor())
+    .await?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        let active_instances: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM instance WHERE model = ?")
+                .bind(&row.model)
+                .fetch_one(get_executor())
+                .await
+                .unwrap_or(0);
+
+        result.push(ModelMetrics {
+            model: row.model,
+            total_requests: row.total_requests,
+            pending_requests: row.pending_requests,
+            completed_requests: row.completed_requests,
+            avg_duration_secs: row.avg_duration,
+            active_instances,
+            last_request_enqueue: row.last_enqueue,
+        });
+    }
+
+    Ok(result)
+}
+
+#[derive(sqlx::FromRow)]
+struct UserMetricsRow {
+    user: Option<String>,
+    total_requests: i64,
+    pending_requests: i64,
+    completed_requests: i64,
+    avg_duration: Option<f64>,
+    last_enqueue: Option<i64>,
+}
+
+pub async fn get_user_metrics(username: Option<&str>) -> Result<Vec<UserMetrics>, anyhow::Error> {
+    let rows = if let Some(u) = username {
+        sqlx::query_as::<_, UserMetricsRow>(
+            r"
+            SELECT
+                user,
+                COUNT(*) AS total_requests,
+                SUM(CASE WHEN done IS NULL THEN 1 ELSE 0 END) AS pending_requests,
+                SUM(CASE WHEN done IS NOT NULL THEN 1 ELSE 0 END) AS completed_requests,
+                AVG(CASE WHEN done IS NOT NULL AND done >= enqueue THEN (done - enqueue) ELSE NULL END) AS avg_duration,
+                MAX(enqueue) AS last_enqueue
+            FROM request
+            WHERE user = ?
+            GROUP BY user
+            ",
+        )
+        .bind(u)
+        .fetch_all(get_executor())
+        .await?
+    } else {
+        sqlx::query_as::<_, UserMetricsRow>(
+            r"
+            SELECT
+                user,
+                COUNT(*) AS total_requests,
+                SUM(CASE WHEN done IS NULL THEN 1 ELSE 0 END) AS pending_requests,
+                SUM(CASE WHEN done IS NOT NULL THEN 1 ELSE 0 END) AS completed_requests,
+                AVG(CASE WHEN done IS NOT NULL AND done >= enqueue THEN (done - enqueue) ELSE NULL END) AS avg_duration,
+                MAX(enqueue) AS last_enqueue
+            FROM request
+            GROUP BY user
+            ORDER BY total_requests DESC
+            ",
+        )
+        .fetch_all(get_executor())
+        .await?
+    };
+
+    Ok(rows
+        .into_iter()
+        .map(|r| UserMetrics {
+            user: r.user.unwrap_or_else(|| "anonymous".to_string()),
+            total_requests: r.total_requests,
+            pending_requests: r.pending_requests,
+            completed_requests: r.completed_requests,
+            avg_duration_secs: r.avg_duration,
+            last_request_enqueue: r.last_enqueue,
+        })
+        .collect())
+}
+
+#[derive(sqlx::FromRow)]
+struct TimeseriesRow {
+    bucket: i64,
+    request_count: i64,
+    avg_duration: Option<f64>,
+}
+
+pub async fn get_timeseries_metrics(
+    interval_secs: i64,
+    points: usize,
+) -> Result<Vec<TimeseriesPoint>, anyhow::Error> {
+    let interval = interval_secs.max(10);
+    let now = Utc::now().timestamp();
+    let points_i64 = i64::try_from(points).unwrap_or(288);
+    let start_time = now - (interval * points_i64);
+
+    let query = format!(
+        r"
+        SELECT
+            (enqueue / {interval}) * {interval} AS bucket,
+            COUNT(*) AS request_count,
+            AVG(CASE WHEN done IS NOT NULL AND done >= enqueue THEN (done - enqueue) ELSE NULL END) AS avg_duration
+        FROM request
+        WHERE enqueue >= {start_time}
+        GROUP BY bucket
+        ORDER BY bucket ASC
+        "
+    );
+
+    let rows = sqlx::query_as::<_, TimeseriesRow>(&query)
+        .fetch_all(get_executor())
+        .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| TimeseriesPoint {
+            timestamp: r.bucket,
+            request_count: r.request_count,
+            avg_duration_secs: r.avg_duration,
+        })
+        .collect())
 }

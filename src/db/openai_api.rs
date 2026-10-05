@@ -1,12 +1,41 @@
 use crate::db::connection::get_executor;
-use secrecy::SecretBox;
+use secrecy::{ExposeSecret, SecretBox};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use url::Url;
 
-#[derive(Debug)]
+pub mod secret_serde {
+    use secrecy::{ExposeSecret, SecretBox};
+    use serde::{Deserializer, Serializer};
+
+    #[allow(clippy::ref_option)]
+    pub fn serialize<S>(
+        secret: &Option<SecretBox<String>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match secret {
+            Some(s) => serializer.serialize_some(s.expose_secret()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<SecretBox<String>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt: Option<String> = serde::Deserialize::deserialize(deserializer)?;
+        Ok(opt.map(|s| SecretBox::new(Box::new(s))))
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct OpenAiApiRecord {
     pub id: String,
     pub url: Url,
+    #[serde(default, with = "secret_serde")]
     pub token: Option<SecretBox<String>>,
     pub prefix: Option<String>,
     pub models: Option<HashSet<String>>,
@@ -16,7 +45,6 @@ pub struct OpenAiApiRecord {
 
 impl Clone for OpenAiApiRecord {
     fn clone(&self) -> Self {
-        use secrecy::ExposeSecret;
         OpenAiApiRecord {
             id: self.id.clone(),
             url: self.url.clone(),
@@ -192,4 +220,12 @@ pub async fn create_openai_api(
     .execute(get_executor())
     .await?;
     Ok(())
+}
+
+pub async fn delete_openai_api(id: &str) -> Result<bool, anyhow::Error> {
+    let res = sqlx::query("DELETE FROM openai_apis WHERE id = ?")
+        .bind(id)
+        .execute(get_executor())
+        .await?;
+    Ok(res.rows_affected() > 0)
 }

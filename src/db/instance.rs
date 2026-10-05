@@ -1,10 +1,17 @@
 use crate::db::connection::get_executor;
+use serde::{Deserialize, Serialize};
 
 #[derive(sqlx::FromRow, Debug)]
 pub struct Instance {
     pub id: String,
     pub model: String,
     pub data: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct InstanceSummary {
+    pub id: String,
+    pub model: String,
 }
 
 pub async fn get_instances_for(model: &str) -> Result<Vec<Instance>, anyhow::Error> {
@@ -14,6 +21,23 @@ pub async fn get_instances_for(model: &str) -> Result<Vec<Instance>, anyhow::Err
             .fetch_all(get_executor())
             .await?,
     )
+}
+
+pub async fn get_all_instances() -> Result<Vec<InstanceSummary>, anyhow::Error> {
+    Ok(
+        sqlx::query_as::<_, InstanceSummary>("SELECT id, model FROM instance ORDER BY model, id")
+            .fetch_all(get_executor())
+            .await?,
+    )
+}
+
+pub async fn get_instance(id: &str) -> Result<Option<InstanceSummary>, anyhow::Error> {
+    Ok(sqlx::query_as::<_, InstanceSummary>(
+        "SELECT id, model FROM instance WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(get_executor())
+    .await?)
 }
 
 pub async fn create_instance(instance: &Instance) -> Result<(), anyhow::Error> {
