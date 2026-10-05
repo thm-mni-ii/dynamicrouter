@@ -17,7 +17,7 @@ pub struct HfModel {
 impl HfModel {
     pub async fn get(id: String) -> Result<HfModel, anyhow::Error> {
         let mut builder = CLIENT.get(format!("https://huggingface.co/api/models/{id}"));
-        if let Some(token) = &CONFIG.huggingface.token {
+        if let Some(token) = &CONFIG.huggingface_token {
             builder = builder.bearer_auth(token.expose_secret());
         }
 

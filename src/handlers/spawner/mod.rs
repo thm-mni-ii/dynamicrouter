@@ -1,5 +1,6 @@
-use crate::config::{CONFIG, FactoryConf, get_model_config_by_name};
+use crate::config::{CONFIG, FactoryType};
 use crate::db::instance::{Instance, create_instance, delete_instance, get_instances_for};
+use crate::db::model::get_model_config;
 use crate::db::request::{
     count_pending_requests_for, create_request, latest_for_each_model, request_done,
 };
@@ -21,8 +22,8 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 
-mod backends;
-mod factories;
+pub mod backends;
+pub mod factories;
 
 pub struct SpawnerHandler {
     model_factory: DynModelFactory,
@@ -32,14 +33,14 @@ pub struct SpawnerHandler {
 
 impl SpawnerHandler {
     pub async fn new_dyn() -> DynHandler {
-        let mf: Arc<dyn ModelFactory> = match CONFIG.factory {
-            FactoryConf::Runpod(_) => Arc::new(RunpodModelFactory::new()),
-            FactoryConf::Kubernetes(_) => match KubernetesModelFactory::new().await {
+        let mf: Arc<dyn ModelFactory> = match CONFIG.factory_type {
+            Some(FactoryType::Kubernetes) => match KubernetesModelFactory::new().await {
                 Ok(mf) => Arc::new(mf),
                 Err(err) => {
                     fatal!("Error while connecting to kubernetes: {err}");
                 }
             },
+            _ => Arc::new(RunpodModelFactory::new()),
         };
         let sh = Arc::new(SpawnerHandler {
             model_factory: mf,
@@ -52,8 +53,7 @@ impl SpawnerHandler {
 
     async fn get_lock(&self, model: &str) -> Arc<Mutex<()>> {
         let mut map_lock = self.model_locks.lock().await;
-        let map_value = map_lock.contains_key(model);
-        if !map_value {
+        if !map_lock.contains_key(model) {
             map_lock.insert(model.to_string(), Arc::new(Mutex::new(())));
         }
         map_lock.get(model).unwrap().clone()
@@ -64,12 +64,11 @@ impl SpawnerHandler {
         for item in results {
             let lock = self.get_lock(&item.model).await;
             let _lock_guard = lock.lock().await;
-            let timeout = CONFIG
-                .models
-                .get(&item.model)
-                .or_else(|| CONFIG.models.get("*"))
-                .and_then(|model| model.timeout)
+            let model_conf = get_model_config(&item.model).await.unwrap_or(None);
+            let timeout = model_conf
+                .and_then(|m| m.timeout)
                 .unwrap_or(CONFIG.model_timeout);
+
             if item.done.is_none() || item.enqueue + i64::from(timeout) > Utc::now().timestamp() {
                 continue;
             }
@@ -97,9 +96,12 @@ impl Handler for SpawnerHandler {
         model: &ModelRef,
         request: &Value,
         username: &str,
+        user_log_request_body: Option<bool>,
     ) -> Result<ModelResponse, anyhow::Error> {
         let model_name = model.to_string();
-        let config = get_model_config_by_name(&model_name)?;
+        let config = get_model_config(&model_name)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Model configuration for '{model_name}' not found"))?;
         let handler_config = config.handler.as_spawner();
 
         let lock = self.get_lock(&model_name).await;
@@ -135,7 +137,7 @@ impl Handler for SpawnerHandler {
                 })?;
             self.model_factory.restore(&instance.data).await?
         };
-        let request_body = if CONFIG.should_log_request_body_for_user(username) {
+        let request_body = if CONFIG.should_log_request_body_for_user(user_log_request_body) {
             Some(request)
         } else {
             None
@@ -188,11 +190,8 @@ pub async fn start_background_auto_clean(sh: Arc<SpawnerHandler>) {
     }
     tokio::task::spawn(async move {
         loop {
-            match sh.auto_clean().await {
-                Ok(()) => {}
-                Err(err) => {
-                    error!("Error while auto cleaning: {err}");
-                }
+            if let Err(err) = sh.auto_clean().await {
+                error!("Error while auto cleaning: {err}");
             }
             sleep(Duration::from_mins(1)).await;
         }

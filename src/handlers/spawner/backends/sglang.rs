@@ -1,4 +1,4 @@
-use crate::config::{BackendGlobalConf, BackendModelConfigMap, BackendUseFor};
+use crate::db::backend::{BackendModelRecord, BackendUseFor};
 use crate::handlers::spawner::backends::common::get_gguf_download_command;
 use crate::handlers::spawner::backends::{Backend, common};
 use crate::utils::{ModelRef, QuantType};
@@ -8,16 +8,21 @@ pub struct SglangBackend {
     id: String,
     image: String,
     use_for: BackendUseFor,
-    model_config: BackendModelConfigMap,
+    model_config: BackendModelRecord,
 }
 
 impl SglangBackend {
-    pub fn new(id: &str, value: &BackendGlobalConf) -> Self {
+    pub fn new(
+        id: &str,
+        image: &str,
+        use_for: BackendUseFor,
+        model_config: BackendModelRecord,
+    ) -> Self {
         SglangBackend {
             id: id.to_string(),
-            image: value.image.clone(),
-            use_for: value.use_for.clone(),
-            model_config: value.models.clone(),
+            image: image.to_string(),
+            use_for,
+            model_config,
         }
     }
 }
@@ -93,24 +98,19 @@ impl Backend for SglangBackend {
                 args.append(&mut vec!["--quantization".to_string(), "gguf".to_string()]);
             }
             QuantType::FP16 => {}
-            qt => panic!("quant type {qt:?} not supported by this backends."),
+            qt => panic!("quant type {qt:?} not supported by this backend."),
         }
 
-        let model_config = self.model_config.get_model(model);
-        if let Some(ctx_length) = model_config.ctx_length {
+        if let Some(ctx_length) = self.model_config.ctx_length {
             args.append(&mut vec![
                 "--context-length".to_string(),
                 ctx_length.to_string(),
             ]);
         }
-        args.append(&mut model_config.arguments.clone());
+        args.append(&mut self.model_config.arguments.clone());
 
         match model.get_quant() {
-            QuantType::Gguf(_) => vec![
-                "bash".to_string(),
-                "-c".to_string(),
-                format!("{}", args.join(" ")),
-            ],
+            QuantType::Gguf(_) => vec!["bash".to_string(), "-c".to_string(), args.join(" ")],
             _ => args,
         }
     }
@@ -127,7 +127,7 @@ impl Backend for SglangBackend {
         None
     }
 
-    fn get_environment(&self, model: &ModelRef) -> HashMap<String, String> {
-        common::get_environment(self.model_config.get_model(model).environment_variables)
+    fn get_environment(&self, _model: &ModelRef) -> HashMap<String, String> {
+        common::get_environment(self.model_config.environment_variables.clone())
     }
 }

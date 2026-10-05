@@ -1,4 +1,4 @@
-use crate::config::{BackendGlobalConf, BackendModelConfigMap, BackendUseFor};
+use crate::db::backend::{BackendModelRecord, BackendUseFor};
 use crate::handlers::spawner::backends::{Backend, common};
 use crate::utils::{ModelRef, QuantType};
 use std::collections::HashMap;
@@ -7,16 +7,21 @@ pub struct LlamaCppBackend {
     id: String,
     image: String,
     use_for: BackendUseFor,
-    model_config: BackendModelConfigMap,
+    model_config: BackendModelRecord,
 }
 
 impl LlamaCppBackend {
-    pub fn new(id: &str, value: &BackendGlobalConf) -> Self {
+    pub fn new(
+        id: &str,
+        image: &str,
+        use_for: BackendUseFor,
+        model_config: BackendModelRecord,
+    ) -> Self {
         LlamaCppBackend {
             id: id.to_string(),
-            image: value.image.clone(),
-            use_for: value.use_for.clone(),
-            model_config: value.models.clone(),
+            image: image.to_string(),
+            use_for,
+            model_config,
         }
     }
 }
@@ -51,11 +56,10 @@ impl Backend for LlamaCppBackend {
             model.get_hf_id(),
         ];
 
-        let model_config = self.model_config.get_model(model);
-        if let Some(ctx_length) = model_config.ctx_length {
+        if let Some(ctx_length) = self.model_config.ctx_length {
             args.append(&mut vec!["--ctx-size".to_string(), ctx_length.to_string()]);
         }
-        args.append(&mut model_config.arguments.clone());
+        args.append(&mut self.model_config.arguments.clone());
 
         if let Some(path) = &model.path {
             args.append(&mut vec!["--hf-file".to_string(), path.clone()]);
@@ -76,7 +80,7 @@ impl Backend for LlamaCppBackend {
         None
     }
 
-    fn get_environment(&self, model: &ModelRef) -> HashMap<String, String> {
-        common::get_environment(self.model_config.get_model(model).environment_variables)
+    fn get_environment(&self, _model: &ModelRef) -> HashMap<String, String> {
+        common::get_environment(self.model_config.environment_variables.clone())
     }
 }

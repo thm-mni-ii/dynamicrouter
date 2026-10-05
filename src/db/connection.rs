@@ -1,23 +1,30 @@
 use crate::config::CONFIG;
 use crate::fatal;
 use once_cell::sync::OnceCell;
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Pool, Sqlite};
+use std::str::FromStr;
 
 pub static DB: OnceCell<Db> = OnceCell::new();
 
 pub async fn init_db() {
+    if DB.get().is_some() {
+        return;
+    }
     match Db::connect().await {
         Ok(db) => {
             if let Err(err) = sqlx::migrate!().run(&db.executor).await {
+                eprintln!("Error while running migrations: {err}");
                 fatal!("Error while running migrations: {err}");
             }
-            if let Ok(()) = DB.set(db) {
-            } else {
-                fatal!("init_db should only be called once");
+            let _ = DB.set(db);
+            if let Err(err) = crate::db::legacy_migration::check_and_migrate_legacy_config().await {
+                eprintln!("Error during legacy config migration: {err}");
+                fatal!("Error during legacy config migration: {err}");
             }
         }
         Err(err) => {
+            eprintln!("Error while connecting to database: {err}");
             fatal!("Error while connection to database: {err}");
         }
     }
@@ -25,7 +32,7 @@ pub async fn init_db() {
 
 pub fn get_executor() -> &'static Pool<Sqlite> {
     DB.get()
-        .expect("you tried to access the dbo before it was initialized")
+        .expect("you tried to access the db before it was initialized")
         .get_executor()
 }
 
@@ -35,12 +42,20 @@ pub struct Db {
 
 impl Db {
     pub async fn connect() -> Result<Db, anyhow::Error> {
-        Ok(Db {
-            executor: SqlitePoolOptions::new()
-                .max_connections(5)
-                .connect(&CONFIG.sqlite_url)
-                .await?,
-        })
+        let db_url = &CONFIG.database_url;
+        let connect_opts = if db_url.starts_with("sqlite:") {
+            SqliteConnectOptions::from_str(db_url)?
+        } else {
+            SqliteConnectOptions::from_str(&format!("sqlite://{db_url}"))?
+        }
+        .create_if_missing(true);
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect_with(connect_opts)
+            .await?;
+
+        Ok(Db { executor: pool })
     }
 
     pub fn get_executor(&self) -> &Pool<Sqlite> {

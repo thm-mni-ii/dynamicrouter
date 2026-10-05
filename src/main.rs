@@ -50,15 +50,16 @@ async fn async_main() {
         .route("/v1/embeddings", post(routes::embeddings))
         .route("/v1/models", get(routes::models));
 
+    let host = &CONFIG.host;
     let port = CONFIG.port;
 
     let handle = axum_server::Handle::new();
     spawn(shutdown_signal(handle.clone()));
 
-    let addr = match format!("0.0.0.0:{port}").parse() {
+    let addr = match format!("{host}:{port}").parse() {
         Ok(addr) => addr,
         Err(err) => {
-            error!("Failed to parse bind address: {err}");
+            error!("Failed to parse bind address {host}:{port}: {err}");
             exit(1);
         }
     };
@@ -82,7 +83,7 @@ async fn async_main() {
             }
         };
 
-        info!("Listening with HTTPS on :{port}");
+        info!("Listening with HTTPS on {host}:{port}");
 
         axum_server::bind_rustls(addr, conf)
             .handle(handle)
@@ -90,7 +91,7 @@ async fn async_main() {
             .await
             .unwrap();
     } else {
-        info!("Listening with HTTP on :{port}");
+        info!("Listening with HTTP on {host}:{port}");
 
         axum_server::bind(addr)
             .handle(handle)

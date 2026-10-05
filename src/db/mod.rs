@@ -1,3 +1,10 @@
+pub mod alias;
+pub mod backend;
 pub mod connection;
+pub mod factory;
 pub mod instance;
+pub mod legacy_migration;
+pub mod model;
+pub mod openai_api;
 pub mod request;
+pub mod user;

@@ -1,4 +1,7 @@
-use crate::config::{CONFIG, User};
+use crate::db::alias::resolve_alias;
+use crate::db::model::get_model_config;
+use crate::db::openai_api::get_all_openai_apis;
+use crate::db::user::{User, get_user_by_token_hash};
 use crate::handlers::{GenerationType, Handler, get_handler};
 use crate::utils::ModelRef;
 use crate::utils::response::ModelResponse;
@@ -11,43 +14,51 @@ use serde_json::{Value, json};
 use sha2::Digest;
 
 pub async fn completions(
-    authorization: Authorization<'_>,
+    authorization: Authorization,
     body: Json<Value>,
 ) -> Result<ModelResponse, StatusCode> {
     generate(GenerationType::Completions, authorization, body).await?
 }
 
 pub async fn embeddings(
-    authorization: Authorization<'_>,
+    authorization: Authorization,
     body: Json<Value>,
 ) -> Result<ModelResponse, StatusCode> {
     generate(GenerationType::Embeddings, authorization, body).await?
 }
 
-pub async fn models(authorization: Authorization<'_>) -> Result<Json<Value>, StatusCode> {
+pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusCode> {
     let mut seen_models = std::collections::HashSet::new();
     let mut models = Vec::new();
 
-    for (name, model) in &CONFIG.models {
-        if model.hidden.unwrap_or(*name == "*") {
+    let db_models = crate::db::model::get_all_models()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    for model in db_models {
+        if model.hidden.unwrap_or(model.id == "*") {
             continue;
         }
         if let Some(users) = &model.limit_to_users
-            && !users.contains(authorization.username)
+            && !users.contains(&authorization.username)
         {
             continue;
         }
         if let Some(limit_to) = &authorization.user.limit_to_models
-            && !limit_to.contains(name)
+            && !limit_to.contains(&model.id)
         {
             continue;
         }
-        if seen_models.insert(name.clone()) {
-            models.push(json!({"id": name, "name": model.name.as_ref().unwrap_or(name)}));
+        if seen_models.insert(model.id.clone()) {
+            models.push(json!({"id": model.id, "name": model.name.as_ref().unwrap_or(&model.id)}));
         }
     }
 
-    for api_conf in CONFIG.openai_apis.values() {
+    let openai_apis = get_all_openai_apis()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    for api_conf in openai_apis {
         if let Some(api_models) = &api_conf.models {
             for m in api_models {
                 let full_id = if let Some(prefix) = &api_conf.prefix {
@@ -76,73 +87,80 @@ pub async fn models(authorization: Authorization<'_>) -> Result<Json<Value>, Sta
     })))
 }
 
-pub fn check_token<'r>(token: &str) -> Option<(&'r String, &'r User)> {
+pub async fn check_token(token: &str) -> Option<User> {
     let mut hasher = sha2::Sha256::new();
     hasher.update(token.as_bytes());
     let hash = hasher.finalize();
     let encoded = hex::encode(hash);
-    CONFIG
-        .users
-        .iter()
-        .find(|(_name, u)| u.token_hashes.contains(&encoded))
+
+    get_user_by_token_hash(&encoded).await.ok().flatten()
 }
 
-#[allow(dead_code)]
-pub struct Authorization<'a> {
-    username: &'a String,
-    user: &'a User,
+pub struct Authorization {
+    pub username: String,
+    pub user: User,
 }
 
-impl<S: Send + Sync> FromRequestParts<S> for Authorization<'_> {
+impl<S: Send + Sync> FromRequestParts<S> for Authorization {
     type Rejection = StatusCode;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        parts
+        let token = parts
             .headers
             .get(header::AUTHORIZATION)
-            .and_then(|header| header.to_str().ok())
-            .and_then(|header| header.strip_prefix("Bearer "))
-            .and_then(check_token)
-            .map(|(username, user)| Authorization { username, user })
-            .ok_or(StatusCode::UNAUTHORIZED)
+            .and_then(|h| h.to_str().ok())
+            .and_then(|h| h.strip_prefix("Bearer "))
+            .ok_or(StatusCode::UNAUTHORIZED)?;
+
+        let user = check_token(token).await.ok_or(StatusCode::UNAUTHORIZED)?;
+        let username = user.username.clone();
+
+        Ok(Authorization { username, user })
     }
 }
 
-fn extract_models(
+async fn extract_models(
     authorization: &Authorization,
     body: &Json<Value>,
 ) -> Result<Vec<ModelRef>, StatusCode> {
-    let Some(models) = body
-        .get("model")
-        .and_then(|v| v.as_str())
-        .map(|m| {
-            CONFIG
-                .aliases
-                .get(m)
-                .map_or_else(|| m.to_string(), |a| a.to.clone())
-        })
-        .and_then(|ms| {
-            ms.split(',')
-                .map(|m| m.parse().ok())
-                .collect::<Option<Vec<ModelRef>>>()
-        })
-    else {
+    let Some(raw_models_str) = body.get("model").and_then(|v| v.as_str()) else {
         return Err(StatusCode::BAD_REQUEST);
     };
-    debug!("Received request for models {models:?}");
 
-    for model in &models {
+    let mut model_refs = Vec::new();
+    for part in raw_models_str.split(',') {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let resolved = resolve_alias(trimmed)
+            .await
+            .unwrap_or(None)
+            .unwrap_or_else(|| trimmed.to_string());
+
+        let model_ref: ModelRef = resolved.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
+        model_refs.push(model_ref);
+    }
+
+    if model_refs.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    debug!("Received request for models {model_refs:?}");
+
+    let openai_apis = get_all_openai_apis().await.unwrap_or_default();
+
+    for model in &model_refs {
         let model_str = model.to_string();
-        let matches_openai = CONFIG
-            .openai_apis
-            .values()
-            .any(|api| api.matches_model(&model_str));
+        let matches_openai = openai_apis.iter().any(|api| api.matches_model(&model_str));
 
-        if let Some(model_conf) = CONFIG.models.get(&model_str) {
-            if !(model_conf
+        let model_conf = get_model_config(&model_str).await.unwrap_or(None);
+
+        if let Some(ref conf) = model_conf {
+            if !(conf
                 .limit_to_users
                 .as_ref()
-                .is_none_or(|limited| limited.contains(authorization.username))
+                .is_none_or(|limited| limited.contains(&authorization.username))
                 && authorization
                     .user
                     .limit_to_models
@@ -162,25 +180,11 @@ fn extract_models(
                 warn!("{} is not allowed to use {model}", authorization.username);
                 return Err(StatusCode::FORBIDDEN);
             }
-        } else if let Some(wildcard_conf) = CONFIG.models.get("*") {
-            if !(wildcard_conf
-                .limit_to_users
-                .as_ref()
-                .is_none_or(|limited| limited.contains(authorization.username))
-                && authorization
-                    .user
-                    .limit_to_models
-                    .as_ref()
-                    .is_none_or(|limited| limited.contains(&model_str)))
-            {
-                warn!("{} is not allowed to use {model}", authorization.username);
-                return Err(StatusCode::FORBIDDEN);
-            }
         } else {
             return Err(StatusCode::NOT_FOUND);
         }
     }
-    Ok(models)
+    Ok(model_refs)
 }
 
 fn replace_model(body: &serde_json::Value, model: &ModelRef) -> serde_json::Value {
@@ -191,16 +195,22 @@ fn replace_model(body: &serde_json::Value, model: &ModelRef) -> serde_json::Valu
 
 async fn generate(
     generation_type: GenerationType,
-    authorization: Authorization<'_>,
+    authorization: Authorization,
     body: Json<Value>,
 ) -> Result<Result<ModelResponse, StatusCode>, StatusCode> {
-    let models = extract_models(&authorization, &body)?;
+    let models = extract_models(&authorization, &body).await?;
 
     let mut result = Err(StatusCode::BAD_REQUEST);
     for model in models {
         let body = replace_model(&body.0, &model);
         match get_handler()
-            .generate(generation_type, &model, &body, authorization.username)
+            .generate(
+                generation_type,
+                &model,
+                &body,
+                &authorization.username,
+                authorization.user.log_request_body,
+            )
             .await
         {
             Ok(res) => {

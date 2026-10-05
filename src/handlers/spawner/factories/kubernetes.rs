@@ -1,4 +1,6 @@
-use crate::config::{CONFIG, KubernetesConf, KubernetesGpu};
+use crate::config::CONFIG;
+use crate::db::factory::{KubernetesGpu, get_kubernetes_gpus};
+use crate::db::model::{ModelHandlerConfig, get_model_config};
 use crate::handlers::GenerationType;
 use crate::handlers::spawner::backends::get_first_supported_backend;
 use crate::handlers::spawner::factories::ModelFactory;
@@ -24,10 +26,7 @@ pub struct KubernetesModelFactory {
 impl KubernetesModelFactory {
     pub async fn new() -> Result<KubernetesModelFactory, anyhow::Error> {
         Ok(KubernetesModelFactory {
-            pod_api: Api::namespaced(
-                Client::try_default().await?,
-                &CONFIG.factory.as_kubernetes().namespace,
-            ),
+            pod_api: Api::namespaced(Client::try_default().await?, &CONFIG.kubernetes_namespace),
         })
     }
 }
@@ -46,12 +45,11 @@ pub fn calculate_gpu_match(gpu: &KubernetesGpu, needed: ByteSize) -> Option<(Str
 }
 
 fn calculate_needed_gpu(
-    config: &KubernetesConf,
+    gpus: &[KubernetesGpu],
     model: &ModelRef,
     needed_memory: ByteSize,
 ) -> Result<(String, u8), anyhow::Error> {
-    let mut options = config
-        .gpus
+    let mut options = gpus
         .iter()
         .filter_map(|gpu| calculate_gpu_match(gpu, needed_memory))
         .collect::<Vec<(String, u8)>>();
@@ -61,25 +59,30 @@ fn calculate_needed_gpu(
 
     Ok(options
         .first()
-        .map(|(model, count)| (model.clone(), *count))
+        .map(|(m, count)| (m.clone(), *count))
         .ok_or(KubernetesError::NoGpuConfig())?)
 }
 
 #[async_trait]
 impl ModelFactory for KubernetesModelFactory {
     async fn create(&self, model: &ModelRef) -> Result<DynModel, anyhow::Error> {
-        let config = CONFIG
-            .factory
-            .as_kubernetes()
-            .get_for_model(&model.to_string());
+        let model_str = model.to_string();
+        let model_conf = get_model_config(&model_str).await.unwrap_or(None);
+        let allowed_backends = model_conf.and_then(|m| match m.handler {
+            ModelHandlerConfig::Spawner(s) => s.backends,
+            ModelHandlerConfig::OpenAi(_) => None,
+        });
 
+        let gpus = get_kubernetes_gpus(Some(&model_str)).await?;
         let model_sizes = ModelSizes::get(model).await?;
 
-        let backend = get_first_supported_backend(model)?;
+        let backend = get_first_supported_backend(model, allowed_backends.as_ref()).await?;
         let (gpu_id, gpu_count) = calculate_needed_gpu(
-            &config,
+            &gpus,
             model,
-            model_sizes.gpu.factor(config.gpu_memory_margin_factor),
+            model_sizes
+                .gpu
+                .factor(CONFIG.kubernetes_gpu_memory_margin_factor),
         )?;
         info!(
             "Using {gpu_count} x {gpu_id} on backend {} for {model}",
@@ -93,21 +96,14 @@ impl ModelFactory for KubernetesModelFactory {
             .map(|(key, value)| json!({"name": key, "value": value}))
             .collect::<Value>();
 
-        let mut node_selector = json!({
+        let node_selector = json!({
             "nvidia.com/gpu.product": gpu_id
         });
-
-        if let Some(additional_node_selector) = &config.additional_node_selector {
-            let node_selector_obj = node_selector.as_object_mut().unwrap();
-            for (key, value) in additional_node_selector {
-                node_selector_obj.insert(key.clone(), json!(value));
-            }
-        }
 
         let (sub_path, mount_path) = backend.get_mount(model);
 
         let mut volumes = vec![
-            json!({"name": "models", "persistentVolumeClaim": {"claimName": config.pvc_name}}),
+            json!({"name": "models", "persistentVolumeClaim": {"claimName": CONFIG.kubernetes_pvc_name}}),
             json!({"name": "dev-shm", "emptyDir": {"medium": "Memory"}}),
         ];
 
@@ -117,7 +113,7 @@ impl ModelFactory for KubernetesModelFactory {
         ];
 
         #[allow(clippy::collapsible_if)]
-        if let Some(cache_pvc_name) = config.cache_pvc_name {
+        if let Some(ref cache_pvc_name) = CONFIG.kubernetes_cache_pvc_name {
             if let Some((sub_path, mount_path)) = backend.get_cache_mount(model) {
                 volumes.push(json!({"name": "cache", "persistentVolumeClaim": {"claimName": cache_pvc_name}}));
                 volume_mounts
@@ -149,7 +145,6 @@ impl ModelFactory for KubernetesModelFactory {
                             }
                         }],
                         "nodeSelector": node_selector,
-                        "tolerations": config.additional_tolerations,
                         "volumes": volumes,
                     }
                 }))?,
@@ -248,9 +243,9 @@ impl KubernetesResolvingModel {
                         .state
                         .as_ref()
                         .and_then(|state| state.waiting.as_ref())
-                        .and_then(|state| state.reason.as_ref())
+                        .and_then(|state| state.reason.as_deref())
                 })
-                .any(|reason| reason == Some(&"CrashLoopBackOff".to_string()))
+                .any(|reason| reason == Some("CrashLoopBackOff"))
         }) {
             return Err(ModelError::NonRetryableError(
                 KubernetesError::Unschedulable("CrashLoopBackOff".to_string().into()).into(),

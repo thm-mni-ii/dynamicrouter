@@ -4,67 +4,73 @@ mod sglang;
 mod tgi;
 mod vllm;
 
-use crate::config::{BackendConf, CONFIG, Handler, SpawnerModelHandlerConfig};
+use crate::db::backend::{get_all_backends, get_backend_model_config};
 use crate::handlers::spawner::backends::llama_cpp::LlamaCppBackend;
 use crate::handlers::spawner::backends::sglang::SglangBackend;
 use crate::handlers::spawner::backends::tgi::TgiBackend;
 use crate::handlers::spawner::backends::vllm::VllmBackend;
 use crate::utils::ModelRef;
 use log::debug;
-use once_cell::sync::Lazy;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 pub type DynBackend = Arc<dyn Backend>;
 
-pub static BACKEND: Lazy<Vec<DynBackend>> = Lazy::new(|| {
-    CONFIG
-        .backends
-        .iter()
-        .map(|(id, backend)| {
-            let backend: DynBackend = match backend {
-                BackendConf::Tgi(backend_image_conf) => {
-                    Arc::new(TgiBackend::new(id, backend_image_conf))
-                }
-                BackendConf::Vllm(backend_image_conf) => {
-                    Arc::new(VllmBackend::new(id, backend_image_conf))
-                }
-                BackendConf::Sglang(backend_image_conf) => {
-                    Arc::new(SglangBackend::new(id, backend_image_conf))
-                }
-                BackendConf::LlamaCpp(backend_image_conf) => {
-                    Arc::new(LlamaCppBackend::new(id, backend_image_conf))
-                }
-            };
-            backend
-        })
-        .collect()
-});
+pub async fn get_first_supported_backend(
+    model: &ModelRef,
+    allowed_backends: Option<&HashSet<String>>,
+) -> Result<DynBackend, BackendError> {
+    let all_backends = get_all_backends()
+        .await
+        .map_err(|_| BackendError::NoSupportedBackedFound())?;
 
-pub fn get_first_supported_backend(model: &ModelRef) -> Result<DynBackend, BackendError> {
-    let per_model_backends =
-        CONFIG
-            .models
-            .get(&model.to_string())
-            .and_then(|model| match &model.handler {
-                Handler::Spawner(SpawnerModelHandlerConfig { backends, .. }) => backends.as_ref(),
-                Handler::OpenAi(_) => None,
-            });
+    for backend_rec in all_backends {
+        if let Some(allowed) = allowed_backends
+            && !allowed.contains(&backend_rec.id)
+        {
+            continue;
+        }
 
-    let mut backend_iter: Box<dyn Iterator<Item = &DynBackend>> = Box::new(BACKEND.iter());
+        let model_config = get_backend_model_config(&backend_rec.id, &model.to_string())
+            .await
+            .unwrap_or(None)
+            .unwrap_or_default();
 
-    if let Some(per_model_backends) = per_model_backends {
-        debug!("{model} limits backends to {per_model_backends:?}");
-        backend_iter =
-            Box::new(backend_iter.filter(|backend| per_model_backends.contains(&backend.get_id())));
-    } else {
-        backend_iter = Box::new(backend_iter.filter(|backend| backend.should_be_used_for(model)));
+        let backend: DynBackend = match backend_rec.backend_type.as_str() {
+            "llama_cpp" => Arc::new(LlamaCppBackend::new(
+                &backend_rec.id,
+                &backend_rec.image,
+                backend_rec.use_for,
+                model_config,
+            )),
+            "sglang" => Arc::new(SglangBackend::new(
+                &backend_rec.id,
+                &backend_rec.image,
+                backend_rec.use_for,
+                model_config,
+            )),
+            "vllm" => Arc::new(VllmBackend::new(
+                &backend_rec.id,
+                &backend_rec.image,
+                backend_rec.use_for,
+                model_config,
+            )),
+            "tgi" => Arc::new(TgiBackend::new(
+                &backend_rec.id,
+                &backend_rec.image,
+                backend_rec.use_for,
+                model_config,
+            )),
+            _ => continue,
+        };
+
+        if backend.should_be_used_for(model) {
+            debug!("Selected backend {} for model {}", backend.get_id(), model);
+            return Ok(backend);
+        }
     }
 
-    backend_iter
-        .next()
-        .cloned()
-        .ok_or(BackendError::NoSupportedBackedFound())
+    Err(BackendError::NoSupportedBackedFound())
 }
 
 pub trait Backend: Send + Sync {

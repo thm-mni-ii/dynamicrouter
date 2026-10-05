@@ -6,8 +6,7 @@ use std::collections::HashMap;
 pub fn get_environment(additional: HashMap<String, String>) -> HashMap<String, String> {
     [
         CONFIG
-            .huggingface
-            .token
+            .huggingface_token
             .as_ref()
             .map(|ht| ("HF_TOKEN".to_string(), ht.expose_secret().clone())),
         Some(("HF_HOME".to_string(), "/models".to_string())),

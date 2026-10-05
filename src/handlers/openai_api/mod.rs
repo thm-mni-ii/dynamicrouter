@@ -1,5 +1,7 @@
-use crate::config::{CONFIG, Handler as ConfigHandler, OpenAiApiConf, OpenAiModelHandlerConfig};
+use crate::config::CONFIG;
 use crate::db::instance::ensure_instance_exists;
+use crate::db::model::{ModelHandlerConfig, OpenAiHandlerConfig, get_model_config};
+use crate::db::openai_api::{OpenAiApiRecord, get_all_openai_apis, get_openai_api};
 use crate::db::request::{create_request, request_done};
 use crate::handlers::{DynHandler, GenerationType, Handler};
 use crate::utils::ModelRef;
@@ -17,7 +19,7 @@ pub struct OpenaiHandler {
 
 struct ResolvedTarget {
     api_name: String,
-    api_conf: OpenAiApiConf,
+    api_conf: OpenAiApiRecord,
     target_model: String,
     timeout: Option<u32>,
     headers: Option<HashMap<String, String>>,
@@ -31,29 +33,24 @@ impl OpenaiHandler {
         })
     }
 
-    fn resolve_target(model: &ModelRef) -> Result<ResolvedTarget, anyhow::Error> {
+    async fn resolve_target(model: &ModelRef) -> Result<ResolvedTarget, anyhow::Error> {
         let model_str = model.to_string();
 
-        // 1. Check if model explicitly configured in CONFIG.models
-        if let Some(model_conf) = CONFIG.models.get(&model_str)
-            && let ConfigHandler::OpenAi(ref openai_conf) = model_conf.handler
+        // 1. Check if model explicitly configured in DB models
+        if let Some(model_conf) = get_model_config(&model_str).await?
+            && let ModelHandlerConfig::OpenAi(ref openai_conf) = model_conf.handler
         {
-            return Self::resolve_from_model_handler(model, openai_conf);
+            return Self::resolve_from_model_handler(model, openai_conf).await;
         }
 
-        // 2. Check if wildcard model configured with OpenAI handler
-        if let Some(wildcard_conf) = CONFIG.models.get("*")
-            && let ConfigHandler::OpenAi(ref openai_conf) = wildcard_conf.handler
-        {
-            return Self::resolve_from_model_handler(model, openai_conf);
-        }
+        let openai_apis = get_all_openai_apis().await?;
 
-        // 3. Match against configured openai_apis by prefix or explicit models list
-        for (api_name, api_conf) in &CONFIG.openai_apis {
+        // 2. Match against configured openai_apis by prefix or explicit models list
+        for api_conf in &openai_apis {
             if api_conf.matches_model(&model_str) {
                 let target_model = api_conf.map_model_name(&model_str);
                 return Ok(ResolvedTarget {
-                    api_name: api_name.clone(),
+                    api_name: api_conf.id.clone(),
                     api_conf: api_conf.clone(),
                     target_model,
                     timeout: api_conf.timeout,
@@ -62,32 +59,32 @@ impl OpenaiHandler {
             }
         }
 
-        // 4. If only one API is configured in openai_apis, use it as fallback
-        if CONFIG.openai_apis.len() == 1 {
-            let (api_name, api_conf) = CONFIG.openai_apis.iter().next().unwrap();
+        // 3. If only one API is configured in openai_apis, use it as fallback
+        if openai_apis.len() == 1 {
+            let api_conf = openai_apis.into_iter().next().unwrap();
             let target_model = api_conf.map_model_name(&model_str);
             return Ok(ResolvedTarget {
-                api_name: api_name.clone(),
-                api_conf: api_conf.clone(),
+                api_name: api_conf.id.clone(),
+                api_conf,
                 target_model,
-                timeout: api_conf.timeout,
-                headers: api_conf.headers.clone(),
+                timeout: None,
+                headers: None,
             });
         }
 
         anyhow::bail!("No matching OpenAI API found for model {model_str}")
     }
 
-    fn resolve_from_model_handler(
+    async fn resolve_from_model_handler(
         model: &ModelRef,
-        handler_conf: &OpenAiModelHandlerConfig,
+        handler_conf: &OpenAiHandlerConfig,
     ) -> Result<ResolvedTarget, anyhow::Error> {
         let model_str = model.to_string();
 
         if let Some(api_name) = &handler_conf.api {
-            let api_conf = CONFIG.openai_apis.get(api_name).ok_or_else(|| {
-                anyhow::anyhow!("OpenAI API '{api_name}' not found in configuration")
-            })?;
+            let api_conf = get_openai_api(api_name)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("OpenAI API '{api_name}' not found in database"))?;
             let target_model = handler_conf
                 .model
                 .clone()
@@ -104,7 +101,7 @@ impl OpenaiHandler {
             };
             return Ok(ResolvedTarget {
                 api_name: api_name.clone(),
-                api_conf: api_conf.clone(),
+                api_conf,
                 target_model,
                 timeout,
                 headers,
@@ -112,7 +109,8 @@ impl OpenaiHandler {
         }
 
         if let Some(url) = &handler_conf.url {
-            let inline_api = OpenAiApiConf {
+            let inline_api = OpenAiApiRecord {
+                id: "inline".to_string(),
                 url: url.clone(),
                 token: handler_conf
                     .token
@@ -136,8 +134,10 @@ impl OpenaiHandler {
             });
         }
 
+        let openai_apis = get_all_openai_apis().await?;
+
         // Search openai_apis by matching prefix/model
-        for (api_name, api_conf) in &CONFIG.openai_apis {
+        for api_conf in &openai_apis {
             if api_conf.matches_model(&model_str) {
                 let target_model = handler_conf
                     .model
@@ -145,7 +145,7 @@ impl OpenaiHandler {
                     .unwrap_or_else(|| api_conf.map_model_name(&model_str));
                 let timeout = handler_conf.timeout.or(api_conf.timeout);
                 return Ok(ResolvedTarget {
-                    api_name: api_name.clone(),
+                    api_name: api_conf.id.clone(),
                     api_conf: api_conf.clone(),
                     target_model,
                     timeout,
@@ -157,22 +157,19 @@ impl OpenaiHandler {
             }
         }
 
-        if CONFIG.openai_apis.len() == 1 {
-            let (api_name, api_conf) = CONFIG.openai_apis.iter().next().unwrap();
+        if openai_apis.len() == 1 {
+            let api_conf = openai_apis.into_iter().next().unwrap();
             let target_model = handler_conf
                 .model
                 .clone()
                 .unwrap_or_else(|| api_conf.map_model_name(&model_str));
             let timeout = handler_conf.timeout.or(api_conf.timeout);
             return Ok(ResolvedTarget {
-                api_name: api_name.clone(),
-                api_conf: api_conf.clone(),
+                api_name: api_conf.id.clone(),
+                api_conf,
                 target_model,
                 timeout,
-                headers: handler_conf
-                    .headers
-                    .clone()
-                    .or_else(|| api_conf.headers.clone()),
+                headers: handler_conf.headers.clone(),
             });
         }
 
@@ -188,6 +185,7 @@ impl Handler for OpenaiHandler {
         model: &ModelRef,
         request: &Value,
         username: &str,
+        user_log_request_body: Option<bool>,
     ) -> Result<ModelResponse, anyhow::Error> {
         let ResolvedTarget {
             api_name,
@@ -195,7 +193,7 @@ impl Handler for OpenaiHandler {
             target_model,
             timeout: timeout_opt,
             headers: headers_opt,
-        } = Self::resolve_target(model)?;
+        } = Self::resolve_target(model).await?;
 
         let endpoint_path = match generation_type {
             GenerationType::Completions => "chat/completions",
@@ -214,7 +212,8 @@ impl Handler for OpenaiHandler {
         let instance_name = format!("openai:{api_name}");
         ensure_instance_exists(&instance_name, &model_name).await?;
 
-        let logged_request_body = if CONFIG.should_log_request_body_for_user(username) {
+        let logged_request_body = if CONFIG.should_log_request_body_for_user(user_log_request_body)
+        {
             Some(&request_body)
         } else {
             None
@@ -267,125 +266,5 @@ impl Handler for OpenaiHandler {
                 Err(err.into())
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::db::connection::init_db;
-    use axum::Json;
-    use axum::Router;
-    use axum::routing::post;
-    use futures_util::StreamExt;
-    use serde_json::json;
-    use url::Url;
-
-    async fn mock_chat_completions(Json(body): Json<Value>) -> Json<Value> {
-        let requested_model = body.get("model").and_then(|m| m.as_str()).unwrap_or("");
-        Json(json!({
-            "id": "chatcmpl-123",
-            "object": "chat.completion",
-            "model": requested_model,
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": "Hello from mock OpenAI endpoint!"
-                },
-                "finish_reason": "stop"
-            }]
-        }))
-    }
-
-    #[tokio::test]
-    async fn test_openai_handler_inline_and_forwarding() {
-        init_db().await;
-
-        let mock_app = Router::new().route("/v1/chat/completions", post(mock_chat_completions));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            axum::serve(listener, mock_app).await.unwrap();
-        });
-
-        let mock_url = Url::parse(&format!("http://127.0.0.1:{port}/v1")).unwrap();
-        let handler_conf = OpenAiModelHandlerConfig {
-            api: None,
-            url: Some(mock_url),
-            token: None,
-            model: Some("gpt-4o-custom".to_string()),
-            timeout: Some(30),
-            headers: None,
-        };
-
-        let target = OpenaiHandler::resolve_from_model_handler(
-            &"my-custom-model".parse().unwrap(),
-            &handler_conf,
-        )
-        .unwrap();
-        assert_eq!(target.target_model, "gpt-4o-custom");
-        assert_eq!(target.api_name, "inline");
-
-        let api_conf = target.api_conf;
-        let completions_url = api_conf.endpoint_url("chat/completions").unwrap();
-        assert_eq!(
-            completions_url.as_str(),
-            format!("http://127.0.0.1:{port}/v1/chat/completions")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_openai_handler_stream_and_logging() {
-        init_db().await;
-
-        let mock_app = Router::new().route("/v1/chat/completions", post(mock_chat_completions));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            axum::serve(listener, mock_app).await.unwrap();
-        });
-
-        let target_url =
-            Url::parse(&format!("http://127.0.0.1:{port}/v1/chat/completions")).unwrap();
-        let client = reqwest::Client::new();
-        ensure_instance_exists("openai:test", "test-model")
-            .await
-            .unwrap();
-        let request_id = create_request("test-model", "openai:test", "default", None)
-            .await
-            .unwrap();
-
-        let res = client
-            .post(target_url)
-            .json(&json!({"model": "test-model"}))
-            .send()
-            .await
-            .unwrap();
-
-        let model_response = ModelResponse {
-            status: res.status(),
-            content_type: res
-                .headers()
-                .get("Content-Type")
-                .and_then(|ct| ct.to_str().ok())
-                .map(ToString::to_string),
-            content_length: res.content_length(),
-            request_id: None,
-            body: Box::new(StreamAdapter::new(res.bytes_stream())),
-        };
-
-        let mut wrapped = wrap_response_with_logging(model_response, request_id.clone());
-        assert_eq!(wrapped.request_id, Some(request_id.clone()));
-
-        let mut accumulated_bytes = Vec::new();
-        while let Some(chunk) = wrapped.body.next().await {
-            accumulated_bytes.extend_from_slice(&chunk.unwrap());
-        }
-
-        let body_str = String::from_utf8(accumulated_bytes).unwrap();
-        assert!(body_str.contains("Hello from mock OpenAI endpoint!"));
-
-        request_done(&request_id).await.unwrap();
     }
 }

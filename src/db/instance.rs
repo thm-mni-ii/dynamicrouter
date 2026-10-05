@@ -8,24 +8,21 @@ pub struct Instance {
 }
 
 pub async fn get_instances_for(model: &str) -> Result<Vec<Instance>, anyhow::Error> {
-    Ok(sqlx::query_as!(
-        Instance,
-        "SELECT id, model, data FROM instance WHERE model = ?",
-        model
+    Ok(
+        sqlx::query_as::<_, Instance>("SELECT id, model, data FROM instance WHERE model = ?")
+            .bind(model)
+            .fetch_all(get_executor())
+            .await?,
     )
-    .fetch_all(get_executor())
-    .await?)
 }
 
 pub async fn create_instance(instance: &Instance) -> Result<(), anyhow::Error> {
-    sqlx::query!(
-        "INSERT INTO instance (id, model, data) VALUES (?, ?, ?)",
-        instance.id,
-        instance.model,
-        instance.data
-    )
-    .execute(get_executor())
-    .await?;
+    sqlx::query("INSERT INTO instance (id, model, data) VALUES (?, ?, ?)")
+        .bind(&instance.id)
+        .bind(&instance.model)
+        .bind(&instance.data)
+        .execute(get_executor())
+        .await?;
     Ok(())
 }
 
@@ -40,7 +37,8 @@ pub async fn ensure_instance_exists(id: &str, model: &str) -> Result<(), anyhow:
 }
 
 pub async fn delete_instance(id: &str) -> Result<(), anyhow::Error> {
-    sqlx::query!("DELETE FROM instance WHERE id = ?", id)
+    sqlx::query("DELETE FROM instance WHERE id = ?")
+        .bind(id)
         .execute(get_executor())
         .await?;
     Ok(())

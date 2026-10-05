@@ -15,15 +15,21 @@ pub struct Request {
 }
 
 pub async fn count_pending_requests_for(model: &str) -> Result<i64, anyhow::Error> {
-    Ok(sqlx::query!("SELECT COUNT(DISTINCT id) AS count, instance FROM request WHERE model = ? AND done IS NULL", model)
-        .fetch_one(get_executor())
-        .await?.count)
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(DISTINCT id) FROM request WHERE model = ? AND done IS NULL",
+    )
+    .bind(model)
+    .fetch_one(get_executor())
+    .await?;
+    Ok(count)
 }
 
 pub async fn latest_for_each_model() -> Result<Vec<Request>, anyhow::Error> {
-    Ok(sqlx::query_as!(Request, "SELECT id AS `id!:String`, model AS `model!:String`, MAX(enqueue) AS enqueue, done, instance AS `instance!:String`, user, request_body, response_body FROM request r GROUP BY model")
-        .fetch_all(get_executor())
-        .await?)
+    Ok(sqlx::query_as::<_, Request>(
+        "SELECT id, model, MAX(enqueue) AS enqueue, done, instance, user, request_body, response_body FROM request GROUP BY model"
+    )
+    .fetch_all(get_executor())
+    .await?)
 }
 
 pub async fn create_request(
@@ -34,33 +40,32 @@ pub async fn create_request(
 ) -> Result<String, anyhow::Error> {
     let id = Uuid::new_v4().to_string();
     let body_str = request_body.map(serde_json::to_string).transpose()?;
-    sqlx::query!(
+    sqlx::query(
         "INSERT INTO request (id, model, enqueue, instance, user, request_body) VALUES (?, ?, unixepoch(), ?, ?, ?)",
-        id,
-        model,
-        instance,
-        user,
-        body_str
     )
+    .bind(&id)
+    .bind(model)
+    .bind(instance)
+    .bind(user)
+    .bind(body_str)
     .execute(get_executor())
     .await?;
     Ok(id)
 }
 
 pub async fn request_done(id: &str) -> Result<(), anyhow::Error> {
-    sqlx::query!("UPDATE request SET done = unixepoch() WHERE id = ?", id)
+    sqlx::query("UPDATE request SET done = unixepoch() WHERE id = ?")
+        .bind(id)
         .execute(get_executor())
         .await?;
     Ok(())
 }
 
 pub async fn save_response_body(id: &str, body: &str) -> Result<(), anyhow::Error> {
-    sqlx::query!(
-        "UPDATE request SET response_body = ? WHERE id = ?",
-        body,
-        id
-    )
-    .execute(get_executor())
-    .await?;
+    sqlx::query("UPDATE request SET response_body = ? WHERE id = ?")
+        .bind(body)
+        .bind(id)
+        .execute(get_executor())
+        .await?;
     Ok(())
 }

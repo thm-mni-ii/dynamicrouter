@@ -1,5 +1,5 @@
-use crate::config;
-use crate::config::get_model_config;
+use crate::db::model::{ModelHandlerConfig, get_model_config};
+use crate::db::openai_api::get_all_openai_apis;
 use crate::handlers::openai_api::OpenaiHandler;
 use crate::handlers::spawner::SpawnerHandler;
 use crate::utils::ModelRef;
@@ -10,17 +10,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 
-mod openai_api;
-mod spawner;
+pub mod openai_api;
+pub mod spawner;
 
 static RH: OnceCell<RoutingHandler> = OnceCell::new();
 
 pub async fn init_handlers() {
     let rh = RoutingHandler::new().await;
-    match RH.set(rh) {
-        Ok(()) => {}
-        Err(_) => panic!("init_handlers should only be called once"),
-    }
+    assert!(
+        RH.set(rh).is_ok(),
+        "init_handlers should only be called once"
+    );
 }
 
 pub fn get_handler() -> &'static RoutingHandler {
@@ -42,6 +42,7 @@ pub trait Handler: Send + Sync {
         model: &ModelRef,
         request: &Value,
         username: &str,
+        user_log_request_body: Option<bool>,
     ) -> Result<ModelResponse, anyhow::Error>;
 }
 
@@ -69,45 +70,53 @@ impl Handler for RoutingHandler {
         model: &ModelRef,
         request: &Value,
         username: &str,
+        user_log_request_body: Option<bool>,
     ) -> Result<ModelResponse, Error> {
         let model_str = model.to_string();
 
-        if let Some(model_conf) = config::CONFIG.models.get(&model_str) {
+        if let Some(model_conf) = get_model_config(&model_str).await? {
             return match &model_conf.handler {
-                config::Handler::Spawner { .. } => {
+                ModelHandlerConfig::Spawner(_) => {
                     self.spawner_handler
-                        .generate(generation_type, model, request, username)
+                        .generate(
+                            generation_type,
+                            model,
+                            request,
+                            username,
+                            user_log_request_body,
+                        )
                         .await
                 }
-                config::Handler::OpenAi { .. } => {
+                ModelHandlerConfig::OpenAi(_) => {
                     self.openai_handler
-                        .generate(generation_type, model, request, username)
+                        .generate(
+                            generation_type,
+                            model,
+                            request,
+                            username,
+                            user_log_request_body,
+                        )
                         .await
                 }
             };
         }
 
-        for api_conf in config::CONFIG.openai_apis.values() {
+        let openai_apis = get_all_openai_apis().await?;
+        for api_conf in openai_apis {
             if api_conf.matches_model(&model_str) {
                 return self
                     .openai_handler
-                    .generate(generation_type, model, request, username)
+                    .generate(
+                        generation_type,
+                        model,
+                        request,
+                        username,
+                        user_log_request_body,
+                    )
                     .await;
             }
         }
 
-        let model_conf = get_model_config(model)?;
-        match &model_conf.handler {
-            config::Handler::Spawner { .. } => {
-                self.spawner_handler
-                    .generate(generation_type, model, request, username)
-                    .await
-            }
-            config::Handler::OpenAi { .. } => {
-                self.openai_handler
-                    .generate(generation_type, model, request, username)
-                    .await
-            }
-        }
+        anyhow::bail!("Model '{model_str}' not found")
     }
 }
