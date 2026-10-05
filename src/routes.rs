@@ -25,23 +25,51 @@ pub async fn embeddings(
 }
 
 pub async fn models(authorization: Authorization<'_>) -> Result<Json<Value>, StatusCode> {
-    let models = CONFIG
-        .models
-        .iter()
-        .filter(|(name, model)| !model.hidden.unwrap_or(*name == "*"))
-        .filter(|(_, model)| match &model.limit_to_users {
-            Some(users) => users.contains(authorization.username),
-            None => true,
-        })
-        .filter(|(name, _model)| {
-            authorization
-                .user
-                .limit_to_models
-                .as_ref()
-                .is_none_or(|limit_to| limit_to.contains(*name))
-        })
-        .map(|(key, model)| json!({"id": key, "name": model.name.as_ref().unwrap_or(key)}))
-        .collect::<Vec<Value>>();
+    let mut seen_models = std::collections::HashSet::new();
+    let mut models = Vec::new();
+
+    for (name, model) in &CONFIG.models {
+        if model.hidden.unwrap_or(*name == "*") {
+            continue;
+        }
+        if let Some(users) = &model.limit_to_users
+            && !users.contains(authorization.username)
+        {
+            continue;
+        }
+        if let Some(limit_to) = &authorization.user.limit_to_models
+            && !limit_to.contains(name)
+        {
+            continue;
+        }
+        if seen_models.insert(name.clone()) {
+            models.push(json!({"id": name, "name": model.name.as_ref().unwrap_or(name)}));
+        }
+    }
+
+    for api_conf in CONFIG.openai_apis.values() {
+        if let Some(api_models) = &api_conf.models {
+            for m in api_models {
+                let full_id = if let Some(prefix) = &api_conf.prefix {
+                    let p = prefix.trim_end_matches('/');
+                    format!("{p}/{m}")
+                } else {
+                    m.clone()
+                };
+
+                if let Some(limit_to) = &authorization.user.limit_to_models
+                    && !limit_to.contains(&full_id)
+                    && !limit_to.contains(m)
+                {
+                    continue;
+                }
+
+                if seen_models.insert(full_id.clone()) {
+                    models.push(json!({"id": full_id, "name": full_id}));
+                }
+            }
+        }
+    }
 
     Ok(Json(json!({
         "data": models,
@@ -104,11 +132,13 @@ fn extract_models(
     debug!("Received request for models {models:?}");
 
     for model in &models {
-        if let Some(model_conf) = CONFIG
-            .models
-            .get(&model.to_string())
-            .or_else(|| CONFIG.models.get("*"))
-        {
+        let model_str = model.to_string();
+        let matches_openai = CONFIG
+            .openai_apis
+            .values()
+            .any(|api| api.matches_model(&model_str));
+
+        if let Some(model_conf) = CONFIG.models.get(&model_str) {
             if !(model_conf
                 .limit_to_users
                 .as_ref()
@@ -117,7 +147,31 @@ fn extract_models(
                     .user
                     .limit_to_models
                     .as_ref()
-                    .is_none_or(|limited| limited.contains(&model.to_string())))
+                    .is_none_or(|limited| limited.contains(&model_str)))
+            {
+                warn!("{} is not allowed to use {model}", authorization.username);
+                return Err(StatusCode::FORBIDDEN);
+            }
+        } else if matches_openai {
+            if !authorization
+                .user
+                .limit_to_models
+                .as_ref()
+                .is_none_or(|limited| limited.contains(&model_str))
+            {
+                warn!("{} is not allowed to use {model}", authorization.username);
+                return Err(StatusCode::FORBIDDEN);
+            }
+        } else if let Some(wildcard_conf) = CONFIG.models.get("*") {
+            if !(wildcard_conf
+                .limit_to_users
+                .as_ref()
+                .is_none_or(|limited| limited.contains(authorization.username))
+                && authorization
+                    .user
+                    .limit_to_models
+                    .as_ref()
+                    .is_none_or(|limited| limited.contains(&model_str)))
             {
                 warn!("{} is not allowed to use {model}", authorization.username);
                 return Err(StatusCode::FORBIDDEN);

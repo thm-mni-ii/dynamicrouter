@@ -2,7 +2,6 @@ use crate::config::{CONFIG, FactoryConf, get_model_config_by_name};
 use crate::db::instance::{Instance, create_instance, delete_instance, get_instances_for};
 use crate::db::request::{
     count_pending_requests_for, create_request, latest_for_each_model, request_done,
-    save_response_body,
 };
 use crate::fatal;
 use crate::handlers::spawner::factories::kubernetes::KubernetesModelFactory;
@@ -11,8 +10,7 @@ use crate::handlers::spawner::factories::runpod::RunpodModelFactory;
 use crate::handlers::spawner::factories::{DynModelFactory, ModelFactory};
 use crate::handlers::{DynHandler, GenerationType, Handler};
 use crate::utils::ModelRef;
-use crate::utils::response::ModelResponse;
-use futures_util::StreamExt;
+use crate::utils::response::{ModelResponse, wrap_response_with_logging};
 use k8s_openapi::chrono::Utc;
 use log::{error, info};
 use rand::seq::IndexedRandom;
@@ -30,31 +28,6 @@ pub struct SpawnerHandler {
     model_factory: DynModelFactory,
     model_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     pub auto_clean_running: Mutex<bool>,
-}
-
-struct ResponseLogger {
-    id: String,
-    buffer: std::sync::Arc<Mutex<Vec<u8>>>,
-}
-
-impl Drop for ResponseLogger {
-    fn drop(&mut self) {
-        let id = self.id.clone();
-        let buffer = self.buffer.clone();
-        tokio::spawn(async move {
-            let bytes = {
-                let lock = buffer.lock().await;
-                lock.clone()
-            };
-            if let Ok(text) = String::from_utf8(bytes) {
-                if let Err(e) = save_response_body(&id, &text).await {
-                    error!("Failed to save response body for request {id}: {e}");
-                }
-            } else {
-                error!("Failed to parse response body as UTF-8 for request {id}");
-            }
-        });
-    }
 }
 
 impl SpawnerHandler {
@@ -172,36 +145,14 @@ impl Handler for SpawnerHandler {
         drop(_lock_guard);
 
         let model = RetryingModel::new_dyn(dyn_model);
-        let mut result = model.generate(generation_type, request).await;
+        let result = model.generate(generation_type, request).await;
 
         request_done(&request_id).await?;
 
-        if let Ok(response) = result.as_mut() {
-            response.request_id = Some(request_id.clone());
-            let buffer = std::sync::Arc::new(Mutex::new(Vec::new()));
-            let logger = ResponseLogger {
-                id: request_id.clone(),
-                buffer: buffer.clone(),
-            };
-
-            let original_body = std::mem::replace(
-                &mut response.body,
-                Box::new(Box::pin(futures_util::stream::empty())),
-            );
-
-            let wrapped_body = original_body.inspect(move |chunk| {
-                if let Ok(bytes) = chunk {
-                    let buffer = logger.buffer.clone();
-                    let bytes = bytes.clone();
-                    tokio::spawn(async move {
-                        let mut lock = buffer.lock().await;
-                        lock.extend_from_slice(&bytes);
-                    });
-                }
-            });
-
-            response.body = Box::new(Box::pin(wrapped_body));
-        }
+        let result = match result {
+            Ok(response) => Ok(wrap_response_with_logging(response, request_id)),
+            Err(err) => Err(err),
+        };
 
         if let Err(ModelError::NonRetryableError(e)) = &result {
             let model_id = model.id().await.to_string();

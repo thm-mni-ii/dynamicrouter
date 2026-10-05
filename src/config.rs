@@ -8,6 +8,7 @@ use secrecy::{ExposeSecret, SecretBox};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::process::exit;
+use url::Url;
 
 fn default_timeout() -> u32 {
     900
@@ -57,6 +58,8 @@ pub struct Conf {
     pub model_retry_interval: u32,
     #[serde(default = "default_log_request_body")]
     pub log_request_body: bool,
+    #[serde(default)]
+    pub openai_apis: HashMap<String, OpenAiApiConf>,
     pub huggingface: HuggingfaceConf,
     pub factory: FactoryConf,
     pub backends: HashMap<String, BackendConf>,
@@ -75,13 +78,119 @@ pub struct Model {
     pub handler: Handler,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
+#[serde(tag = "type")]
 pub enum Handler {
     #[serde(rename = "spawner")]
     Spawner(SpawnerModelHandlerConfig),
+    #[serde(rename = "openai")]
+    OpenAi(OpenAiModelHandlerConfig),
+}
+
+#[derive(Deserialize, Debug, Default)]
+pub struct OpenAiModelHandlerConfig {
+    pub api: Option<String>,
+    pub url: Option<Url>,
+    pub token: Option<SecretBox<String>>,
+    pub model: Option<String>,
+    pub timeout: Option<u32>,
+    pub headers: Option<HashMap<String, String>>,
+}
+
+impl Clone for OpenAiModelHandlerConfig {
+    fn clone(&self) -> Self {
+        OpenAiModelHandlerConfig {
+            api: self.api.clone(),
+            url: self.url.clone(),
+            token: self
+                .token
+                .as_ref()
+                .map(|t| SecretBox::new(Box::new(t.expose_secret().clone()))),
+            model: self.model.clone(),
+            timeout: self.timeout,
+            headers: self.headers.clone(),
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
+pub struct OpenAiApiConf {
+    pub url: Url,
+    pub token: Option<SecretBox<String>>,
+    pub prefix: Option<String>,
+    pub models: Option<HashSet<String>>,
+    pub timeout: Option<u32>,
+    pub headers: Option<HashMap<String, String>>,
+}
+
+impl Clone for OpenAiApiConf {
+    fn clone(&self) -> Self {
+        OpenAiApiConf {
+            url: self.url.clone(),
+            token: self
+                .token
+                .as_ref()
+                .map(|t| SecretBox::new(Box::new(t.expose_secret().clone()))),
+            prefix: self.prefix.clone(),
+            models: self.models.clone(),
+            timeout: self.timeout,
+            headers: self.headers.clone(),
+        }
+    }
+}
+
+impl OpenAiApiConf {
+    pub fn endpoint_url(&self, path: &str) -> Result<Url, url::ParseError> {
+        let mut base = self.url.as_str().trim_end_matches('/').to_string();
+        if !base.ends_with("/v1") && !base.contains("/v1/") {
+            base.push_str("/v1");
+        }
+        let clean_path = path.trim_start_matches('/');
+        let url_str = format!("{base}/{clean_path}");
+        Url::parse(&url_str)
+    }
+
+    pub fn map_model_name(&self, model_name: &str) -> String {
+        if let Some(prefix) = &self.prefix {
+            let p = prefix.trim_end_matches('/');
+            if let Some(stripped) = model_name.strip_prefix(prefix.as_str()) {
+                stripped.trim_start_matches('/').to_string()
+            } else if let Some(stripped) = model_name.strip_prefix(p) {
+                stripped.trim_start_matches('/').to_string()
+            } else {
+                model_name.to_string()
+            }
+        } else {
+            model_name.to_string()
+        }
+    }
+
+    pub fn matches_model(&self, model_name: &str) -> bool {
+        if let Some(prefix) = &self.prefix {
+            let p = prefix.trim_end_matches('/');
+            if model_name.starts_with(prefix.as_str())
+                || model_name.starts_with(&format!("{p}/"))
+                || model_name == p
+            {
+                return true;
+            }
+        }
+        if let Some(models) = &self.models {
+            if models.contains(model_name) {
+                return true;
+            }
+            if self.prefix.is_some() {
+                let stripped = self.map_model_name(model_name);
+                if models.contains(&stripped) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
+#[derive(Deserialize, Debug, Clone)]
 pub struct SpawnerModelHandlerConfig {
     pub backends: Option<HashSet<String>>,
     #[serde(default = "default_min_scale")]
@@ -97,6 +206,14 @@ impl Handler {
         match self {
             Handler::Spawner(conf) => conf,
             _ => panic!("model handler config is not spawner"),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn as_openai(&self) -> &OpenAiModelHandlerConfig {
+        match self {
+            Handler::OpenAi(conf) => conf,
+            _ => panic!("model handler config is not openai"),
         }
     }
 }

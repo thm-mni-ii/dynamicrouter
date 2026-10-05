@@ -48,6 +48,7 @@ pub fn get_first_supported_backend(model: &ModelRef) -> Result<DynBackend, Backe
             .get(&model.to_string())
             .and_then(|model| match &model.handler {
                 Handler::Spawner(SpawnerModelHandlerConfig { backends, .. }) => backends.as_ref(),
+                Handler::OpenAi(_) => None,
             });
 
     let mut backend_iter: Box<dyn Iterator<Item = &DynBackend>> = Box::new(BACKEND.iter());

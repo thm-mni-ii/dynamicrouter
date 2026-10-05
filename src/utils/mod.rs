@@ -10,8 +10,10 @@ use std::fmt::{Debug, Display, Formatter};
 use std::num::TryFromIntError;
 use std::str::FromStr;
 
-static MODEL_REF_REGEXP: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^(.*?)/(.*?)(?::(.*?))?(?:/(.*?))?(?:#(.*?))?(?:@(.*?))?$").unwrap());
+static MODEL_REF_REGEXP: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^(?:([^/:]+)/)?([^/:#@]+)(?::([^/#@]+))?(?:/([^#@]+))?(?:#([^@]+))?(?:@(.+))?$")
+        .unwrap()
+});
 static QUANT_REGEXP: Lazy<Regex> = Lazy::new(|| Regex::new(r"^([Gg])(\d{1,2})$").unwrap());
 static PARAMETER_COUNT_EXTRACTION_REGEXP: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\d+[BMbm]").unwrap());
@@ -37,17 +39,17 @@ impl FromStr for ModelRef {
         let res = MODEL_REF_REGEXP
             .captures(s)
             .ok_or(ModelRefParseError::InvalidModelRef())?;
+        let org = res
+            .get(1)
+            .map_or_else(String::new, |m| m.as_str().to_string());
+        let repo = res
+            .get(2)
+            .ok_or(ModelRefParseError::InvalidModelRef())?
+            .as_str()
+            .to_string();
         Ok(ModelRef {
-            org: res
-                .get(1)
-                .ok_or(ModelRefParseError::InvalidModelRef())?
-                .as_str()
-                .to_string(),
-            repo: res
-                .get(2)
-                .ok_or(ModelRefParseError::InvalidModelRef())?
-                .as_str()
-                .to_string(),
+            org,
+            repo,
             rev: res.get(3).map(|m| m.as_str().to_string()),
             path: res.get(4).map(|m| m.as_str().to_string()),
             param_count: res.get(5).map(|m| m.as_str().parse()).transpose()?,
@@ -77,7 +79,11 @@ impl FromStr for ModelRef {
 
 impl ModelRef {
     pub fn get_hf_id(&self) -> String {
-        format!("{}/{}", self.org, self.repo)
+        if self.org.is_empty() {
+            self.repo.clone()
+        } else {
+            format!("{}/{}", self.org, self.repo)
+        }
     }
     pub fn get_hf_id_with_path(&self) -> String {
         let hf_id = self.get_hf_id();
@@ -96,7 +102,10 @@ impl ModelRef {
 
 impl Display for ModelRef {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}", self.org, self.repo)?;
+        if !self.org.is_empty() {
+            write!(f, "{}/", self.org)?;
+        }
+        write!(f, "{}", self.repo)?;
         if let Some(rev) = &self.rev {
             write!(f, ":{rev}")?;
         }

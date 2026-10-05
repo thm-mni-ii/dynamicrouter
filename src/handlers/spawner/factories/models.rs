@@ -1,10 +1,8 @@
 use crate::config::CONFIG;
 use crate::handlers::GenerationType;
 use crate::handlers::spawner::factories::models::ModelError::{NonRetryableError, RetryableError};
-use crate::utils::response::ModelResponse;
+use crate::utils::response::{ModelResponse, StreamAdapter};
 use async_trait::async_trait;
-use bytes::Bytes;
-use futures_util::StreamExt;
 use log::warn;
 use once_cell::sync::Lazy;
 use reqwest::{Client, StatusCode, Url};
@@ -12,34 +10,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fmt::{Display, Formatter};
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::sleep;
-
-struct StreamAdapter<P: futures_core::Stream<Item = Result<Bytes, reqwest::Error>> + Send + Unpin> {
-    parent: P,
-}
-
-impl<P: futures_core::Stream<Item = Result<Bytes, reqwest::Error>> + Send + Unpin>
-    StreamAdapter<P>
-{
-    pub fn new(parent: P) -> StreamAdapter<P> {
-        StreamAdapter { parent }
-    }
-}
-
-impl<P: futures_core::Stream<Item = Result<Bytes, reqwest::Error>> + Send + Unpin>
-    futures_core::Stream for StreamAdapter<P>
-{
-    type Item = Result<Bytes, anyhow::Error>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.parent.poll_next_unpin(cx).map_err(anyhow::Error::from)
-    }
-}
 
 #[allow(dead_code)]
 #[async_trait::async_trait]
