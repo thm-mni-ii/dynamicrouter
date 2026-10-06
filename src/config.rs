@@ -45,9 +45,141 @@ pub struct EnvConfig {
     pub oidc_enabled: bool,
 }
 
+fn load_env_all() {
+    let _ = dotenvy::dotenv_override();
+    let _ = dotenvy::from_filename_override(".env");
+    let _ = dotenvy::from_filename_override(".env.local");
+
+    if let Ok(mut exe) = env::current_exe() {
+        while exe.pop() {
+            let candidate = exe.join(".env");
+            if candidate.is_file() {
+                let _ = dotenvy::from_path_override(&candidate);
+                break;
+            }
+        }
+    }
+
+    if let Ok(mut dir) = env::current_dir() {
+        for _ in 0..5 {
+            let candidate = dir.join(".env");
+            if candidate.is_file() {
+                let _ = dotenvy::from_path_override(&candidate);
+                break;
+            }
+            if !dir.pop() {
+                break;
+            }
+        }
+    }
+
+    if let Ok(custom) = env::var("ENV_FILE") {
+        let _ = dotenvy::from_path_override(&custom);
+    }
+}
+
+fn parse_list_from_env(var_names: &[&str]) -> HashSet<String> {
+    let mut result = HashSet::new();
+
+    for &var_name in var_names {
+        if let Ok(raw) = env::var(var_name) {
+            let trimmed_raw = raw.trim();
+            if trimmed_raw.is_empty() {
+                continue;
+            }
+
+            // Check if formatted as a JSON array (e.g. `["user1", "user2"]`)
+            if let Ok(arr) = serde_json::from_str::<Vec<String>>(trimmed_raw) {
+                for item in arr {
+                    let cleaned = item
+                        .trim()
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .trim()
+                        .to_string();
+                    if !cleaned.is_empty() {
+                        result.insert(cleaned);
+                    }
+                }
+            }
+
+            // Strip trailing comments (e.g. `user1, user2 # admin users`)
+            let before_comment = trimmed_raw.split('#').next().unwrap_or(trimmed_raw);
+            let cleaned_raw = before_comment
+                .trim()
+                .trim_matches('[')
+                .trim_matches(']')
+                .trim_matches('{')
+                .trim_matches('}');
+
+            for part in cleaned_raw.split(|c| c == ',' || c == ';' || c == '\n') {
+                for token in part.split_whitespace() {
+                    let cleaned = token
+                        .trim()
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .trim_matches(',')
+                        .trim_matches(';')
+                        .trim();
+                    if !cleaned.is_empty() {
+                        result.insert(cleaned.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Direct fallback: parse .env line by line if not yet captured
+    if result.is_empty() {
+        let candidates = [".env", ".env.local", "../.env"];
+        for candidate_path in candidates {
+            if let Ok(content) = std::fs::read_to_string(candidate_path) {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with('#') || trimmed.is_empty() {
+                        continue;
+                    }
+                    for &var_name in var_names {
+                        if let Some(rest) = trimmed.strip_prefix(var_name) {
+                            let rest = rest.trim_start();
+                            if let Some(val) = rest.strip_prefix('=') {
+                                let val_clean = val.split('#').next().unwrap_or(val).trim();
+                                let val_clean = val_clean
+                                    .trim_matches('"')
+                                    .trim_matches('\'')
+                                    .trim_matches('[')
+                                    .trim_matches(']');
+                                for part in val_clean.split(|c| c == ',' || c == ';' || c == '\n') {
+                                    for token in part.split_whitespace() {
+                                        let cleaned = token
+                                            .trim()
+                                            .trim_matches('"')
+                                            .trim_matches('\'')
+                                            .trim();
+                                        if !cleaned.is_empty() {
+                                            result.insert(cleaned.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if !result.is_empty() {
+                    break;
+                }
+            }
+        }
+    }
+
+    result
+}
+
 impl EnvConfig {
     #[allow(clippy::too_many_lines)]
     pub fn from_env() -> Self {
+        load_env_all();
+
         let port = env::var("PORT")
             .ok()
             .and_then(|p| p.parse().ok())
@@ -160,28 +292,33 @@ impl EnvConfig {
         let oidc_scopes = env::var("OIDC_SCOPES")
             .unwrap_or_else(|_| "openid profile email".to_string());
 
-        let oidc_admin_users = env::var("OIDC_ADMIN_USERS")
-            .or_else(|_| env::var("INITIAL_ADMIN_USERS"))
-            .or_else(|_| env::var("ADMIN_USERS"))
-            .map(|s| {
-                s.split(',')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(ToString::to_string)
-                    .collect::<HashSet<_>>()
-            })
-            .unwrap_or_default();
+        let oidc_admin_users = parse_list_from_env(&[
+            "OIDC_ADMIN_USERS",
+            "OIDC_ADMIN_USER",
+            "OIDC_ADMINS",
+            "OIDC_ADMIN",
+            "INITIAL_ADMIN_USERS",
+            "INITIAL_ADMIN_USER",
+            "INITIAL_ADMINS",
+            "INITIAL_ADMIN",
+            "ADMIN_USERS",
+            "ADMIN_USER",
+            "ADMINS",
+            "ADMIN",
+            "OIDC_ADMIN_EMAILS",
+            "OIDC_ADMIN_EMAIL",
+            "ADMIN_EMAILS",
+            "ADMIN_EMAIL",
+        ]);
 
-        let oidc_admin_roles = env::var("OIDC_ADMIN_ROLES")
-            .or_else(|_| env::var("ADMIN_ROLES"))
-            .map(|s| {
-                s.split(',')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(ToString::to_string)
-                    .collect::<HashSet<_>>()
-            })
-            .unwrap_or_default();
+        let oidc_admin_roles = parse_list_from_env(&[
+            "OIDC_ADMIN_ROLES",
+            "OIDC_ADMIN_ROLE",
+            "ADMIN_ROLES",
+            "ADMIN_ROLE",
+            "ROLES",
+            "ROLE",
+        ]);
 
         let oidc_enabled = env::var("OIDC_ENABLED").map_or_else(
             |_| oidc_issuer_url.is_some() || oidc_discovery_url.is_some() || oidc_client_id.is_some(),
@@ -222,8 +359,16 @@ impl EnvConfig {
         user_override.unwrap_or(self.log_request_body)
     }
 
-    pub fn is_user_admin_by_config(&self, username: &str) -> bool {
-        self.oidc_admin_users.contains(username)
+    pub fn is_user_admin_by_config(&self, identifier: &str) -> bool {
+        let id_clean = identifier.trim().trim_matches('"').trim_matches('\'');
+        if id_clean.is_empty() {
+            return false;
+        }
+        let id_lower = id_clean.to_lowercase();
+        self.oidc_admin_users.iter().any(|u| {
+            let u_clean = u.trim().trim_matches('"').trim_matches('\'');
+            u_clean.eq_ignore_ascii_case(id_clean) || u_clean.to_lowercase() == id_lower
+        })
     }
 }
 

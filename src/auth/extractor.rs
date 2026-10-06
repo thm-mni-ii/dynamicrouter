@@ -89,30 +89,13 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
     type Rejection = AuthError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let raw_token_opt = extract_token_from_parts(parts);
+        let Some(raw_token) = extract_token_from_parts(parts) else {
+            return Err(AuthError::MissingToken);
+        };
 
-        // If no token provided and OIDC is not enabled, check if we are in local unauthenticated dev mode
-        if raw_token_opt.is_none() {
-            if !CONFIG.oidc_enabled {
-                let default_user = get_user_by_username("default")
-                    .await
-                    .ok()
-                    .flatten();
-                let is_admin = default_user.as_ref().is_none_or(|u| u.is_admin);
-                return Ok(AuthUser {
-                    username: default_user
-                        .as_ref()
-                        .map_or_else(|| "admin".to_string(), |u| u.username.clone()),
-                    email: None,
-                    is_admin,
-                    user: default_user,
-                    token: "dev-mode".to_string(),
-                });
-            }
+        if raw_token.trim().is_empty() {
             return Err(AuthError::MissingToken);
         }
-
-        let raw_token = raw_token_opt.unwrap();
 
         // 1. Check in active session store (OIDC PKCE login session)
         if let Some(session) = SESSIONS.get_session(&raw_token).await {

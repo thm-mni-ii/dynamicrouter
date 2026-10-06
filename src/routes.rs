@@ -89,14 +89,22 @@ pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusC
 
 pub async fn check_token(token: &str) -> Option<User> {
     if let Some(session) = crate::auth::session::SESSIONS.get_session(token).await {
-        if let Ok(Some(user)) = crate::db::user::get_user_by_username(&session.username).await {
+        let is_admin = session.is_admin
+            || crate::config::CONFIG.is_user_admin_by_config(&session.username)
+            || session
+                .email
+                .as_deref()
+                .is_some_and(|e| crate::config::CONFIG.is_user_admin_by_config(e));
+
+        if let Ok(Some(mut user)) = crate::db::user::get_user_by_username(&session.username).await {
+            user.is_admin = user.is_admin || is_admin;
             return Some(user);
         }
         return Some(User {
             username: session.username,
             limit_to_models: None,
             log_request_body: None,
-            is_admin: session.is_admin,
+            is_admin,
         });
     }
 
@@ -104,11 +112,17 @@ pub async fn check_token(token: &str) -> Option<User> {
     hasher.update(token.as_bytes());
     let hash = hex::encode(hasher.finalize());
 
-    if let Ok(Some(user)) = get_user_by_token_hash(&hash).await {
+    if let Ok(Some(mut user)) = get_user_by_token_hash(&hash).await {
+        user.is_admin = user.is_admin || crate::config::CONFIG.is_user_admin_by_config(&user.username);
         return Some(user);
     }
 
-    get_user_by_token_hash(token).await.ok().flatten()
+    if let Ok(Some(mut user)) = get_user_by_token_hash(token).await {
+        user.is_admin = user.is_admin || crate::config::CONFIG.is_user_admin_by_config(&user.username);
+        return Some(user);
+    }
+
+    None
 }
 
 pub struct Authorization {

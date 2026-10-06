@@ -234,6 +234,11 @@ pub fn extract_claims_from_json(val: &serde_json::Value) -> UserInfoClaims {
     let name = val.get("name").and_then(|v| v.as_str()).map(ToString::to_string);
     let preferred_username = val
         .get("preferred_username")
+        .or_else(|| val.get("nickname"))
+        .or_else(|| val.get("upn"))
+        .or_else(|| val.get("unique_name"))
+        .or_else(|| val.get("cognito:username"))
+        .or_else(|| val.get("username"))
         .and_then(|v| v.as_str())
         .map(ToString::to_string);
     let email = val.get("email").and_then(|v| v.as_str()).map(ToString::to_string);
@@ -256,12 +261,28 @@ pub fn extract_claims_from_json(val: &serde_json::Value) -> UserInfoClaims {
             }
         }
     }
+    if let Some(resource_access) = val.get("resource_access").and_then(|v| v.as_object()) {
+        for client in resource_access.values() {
+            if let Some(arr) = client.get("roles").and_then(|v| v.as_array()) {
+                for item in arr {
+                    if let Some(r) = item.as_str() {
+                        roles.insert(r.to_string());
+                    }
+                }
+            }
+        }
+    }
 
     let mut groups = HashSet::new();
-    if let Some(arr) = val.get("groups").and_then(|v| v.as_array()) {
+    if let Some(arr) = val
+        .get("groups")
+        .or_else(|| val.get("cognito:groups"))
+        .and_then(|v| v.as_array())
+    {
         for item in arr {
             if let Some(g) = item.as_str() {
                 groups.insert(g.to_string());
+                roles.insert(g.to_string());
             }
         }
     }

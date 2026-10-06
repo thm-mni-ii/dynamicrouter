@@ -29,6 +29,8 @@ fn main() {
 }
 
 async fn async_main() {
+    dotenvy::dotenv().ok();
+
     env_logger::builder()
         .filter_level(LevelFilter::Info)
         .parse_default_env()
@@ -41,13 +43,13 @@ async fn async_main() {
     init_handlers().await;
 
     let app = Router::new()
-        .merge(new_static_router())
         .route("/v1/chat/completions", post(routes::completions))
         .route("/v1/embeddings", post(routes::embeddings))
         .route("/v1/models", get(routes::models))
         .nest("/auth", auth_routes())
         .nest("/api", api_routes())
-        .route("/metrics", get(prometheus_metrics));
+        .route("/metrics", get(prometheus_metrics))
+        .merge(new_static_router());
 
     let host = &CONFIG.host;
     let port = CONFIG.port;

@@ -1,12 +1,39 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark" />
-  <link rel="css" href="pico.lime.min.css" data-trunk>
-  <title>DynamicRouter Prompt Test</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DynamicRouter</title>
+  
+  <!-- Fonts: Inter, Outfit, JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- CSS Asset for Trunk -->
+  <link data-trunk rel="css" href="style.css">
+  <link data-trunk rel="rust" href="Cargo.toml" data-wasm-opt="0" />
+
+  <!-- Inline Script to prevent Theme/Glow Flash -->
+  <script>
+    (function() {
+      try {
+        var theme = localStorage.getItem('dr_theme') || 'dark';
+        document.documentElement.setAttribute('data-theme', theme);
+        
+        var glowRgb = localStorage.getItem('dr_glow_rgb') || '0, 242, 254';
+        var glowPrimary = localStorage.getItem('dr_glow_primary') || '#00f2fe';
+        var glowAccent = localStorage.getItem('dr_glow_accent') || '#4facfe';
+        
+        document.documentElement.style.setProperty('--glow-rgb', glowRgb);
+        document.documentElement.style.setProperty('--glow-primary', glowPrimary);
+        document.documentElement.style.setProperty('--glow-accent', glowAccent);
+        document.documentElement.style.setProperty('--glow-gradient', 'linear-gradient(135deg, ' + glowPrimary + ' 0%, ' + glowAccent + ' 100%)');
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
+  <div id="main"></div>
 </body>
 </html>

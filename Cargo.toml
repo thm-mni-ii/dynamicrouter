@@ -33,6 +33,13 @@ rustls = { version = "0.23.23", features = ["ring"] }
 uuid = { version = "1.15.1", features = ["v4"] }
 base64 = "0.22.1"
 chrono = { version = "0.4.39", features = ["serde"] }
+rust-embed = "8.5.0"
+mime_guess = "2.0.5"
+dotenvy = "0.15.7"
+
+[dev-dependencies]
+tower = { version = "0.5.2", features = ["util"] }
+http-body-util = "0.1.2"
 
 [profile.release]
 strip = true

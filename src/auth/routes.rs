@@ -1,12 +1,15 @@
 use crate::auth::extractor::AuthUser;
-use crate::auth::oidc::{OidcClient, decode_jwt_payload_unverified, extract_claims_from_json, generate_pkce_pair, generate_random_token};
+use crate::auth::oidc::{
+    decode_jwt_payload_unverified, extract_claims_from_json, generate_pkce_pair,
+    generate_random_token, OidcClient,
+};
 use crate::auth::session::SESSIONS;
 use crate::config::CONFIG;
 use crate::db::user::{create_user, get_user_by_username};
 use axum::extract::Query;
-use axum::http::header::{HeaderMap, SET_COOKIE};
+use axum::http::header::{HeaderMap, SET_COOKIE, CONTENT_TYPE};
 use axum::http::{StatusCode, Uri};
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use log::{error, info};
@@ -145,34 +148,398 @@ async fn auth_login(
     }
 }
 
+fn render_callback_success_html(username: &str, is_admin: bool, session_token: &str) -> String {
+    let role_badge = if is_admin {
+        r#"<span class="badge badge-admin">Administrator</span>"#
+    } else {
+        r#"<span class="badge badge-user">Standard User</span>"#
+    };
+
+    format!(r#"<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Authenticating - DynamicRouter</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {{
+      --bg-base: #060913;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      
+      /* Initial White Lighting Glow */
+      --glow-primary: #ffffff;
+      --glow-rgb: 255, 255, 255;
+      --glow-accent: #e2e8f0;
+      --glow-gradient: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
+      --glow-shadow: 0 0 35px -5px rgba(255, 255, 255, 0.35);
+      
+      --glass-bg: rgba(15, 23, 42, 0.7);
+      --glass-border: rgba(255, 255, 255, 0.12);
+    }}
+    
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    
+    body {{
+      min-height: 100vh;
+      font-family: 'Inter', system-ui, sans-serif;
+      background-color: var(--bg-base);
+      background-image: radial-gradient(circle at 50% 30%, #111827 0%, #060913 75%);
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+      overflow: hidden;
+      position: relative;
+    }}
+    
+    .ambient-glow {{
+      position: fixed;
+      width: 550px;
+      height: 550px;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.22;
+      background: var(--glow-primary);
+      transition: background 800ms cubic-bezier(0.16, 1, 0.3, 1), transform 800ms ease;
+      pointer-events: none;
+      z-index: 0;
+    }}
+    
+    .glass-card {{
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 480px;
+      background: var(--glass-bg);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid var(--glass-border);
+      border-radius: 24px;
+      padding: 2.5rem 2rem;
+      text-align: center;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), var(--glow-shadow);
+      transition: all 600ms cubic-bezier(0.16, 1, 0.3, 1);
+    }}
+    
+    .status-icon-wrapper {{
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 1.5rem;
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2rem;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      transition: all 600ms ease;
+    }}
+    
+    .spinner {{
+      width: 32px;
+      height: 32px;
+      border: 3px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #ffffff;
+      border-radius: 50%;
+      animation: spin 800ms linear infinite;
+    }}
+    
+    @keyframes spin {{
+      to {{ transform: rotate(360deg); }}
+    }}
+    
+    .title {{
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      color: var(--text-main);
+    }}
+    
+    .subtitle {{
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }}
+    
+    .badge {{
+      display: inline-block;
+      margin-top: 0.75rem;
+      padding: 0.25rem 0.85rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }}
+    
+    .badge-admin {{
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #34d399;
+    }}
+    
+    .badge-user {{
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #f8fafc;
+    }}
+    
+    .progress-bar {{
+      margin-top: 2rem;
+      width: 100%;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 9999px;
+      overflow: hidden;
+      position: relative;
+    }}
+    
+    .progress-fill {{
+      height: 100%;
+      width: 0%;
+      background: var(--glow-gradient);
+      border-radius: 9999px;
+      transition: width 2500ms linear;
+    }}
+    
+    .redirect-hint {{
+      margin-top: 0.75rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }}
+    
+    .manual-btn {{
+      margin-top: 1.25rem;
+      display: inline-block;
+      padding: 0.5rem 1.25rem;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #040810;
+      background: var(--glow-gradient);
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      box-shadow: var(--glow-shadow);
+      transition: transform 150ms ease;
+    }}
+    
+    .manual-btn:hover {{
+      transform: translateY(-1px);
+    }}
+  </style>
+</head>
+<body>
+  <div class="ambient-glow" id="glow"></div>
+  
+  <div class="glass-card" id="card">
+    <div class="status-icon-wrapper" id="iconBox">
+      <div class="spinner" id="spinner"></div>
+    </div>
+    <h2 class="title" id="title">Authenticating session...</h2>
+    <p class="subtitle" id="subtitle">Verifying security token and permissions...</p>
+    <div id="badgeContainer"></div>
+    
+    <div class="progress-bar">
+      <div class="progress-fill" id="progress"></div>
+    </div>
+    <p class="redirect-hint" id="redirectHint">Processing authentication...</p>
+  </div>
+
+  <script>
+    (function() {{
+      const token = "{session_token}";
+      const username = "{username}";
+      
+      // Store session token in localStorage for frontend client
+      try {{
+        localStorage.setItem('dr_api_key', token);
+      }} catch (e) {{}}
+
+      // Step 1: Initial White background glow light while processing
+      // Step 2: Transition to vibrant green light with success message
+      setTimeout(function() {{
+        // Switch variables to Emerald Green
+        document.documentElement.style.setProperty('--glow-primary', '#10b981');
+        document.documentElement.style.setProperty('--glow-rgb', '16, 185, 129');
+        document.documentElement.style.setProperty('--glow-accent', '#34d399');
+        document.documentElement.style.setProperty('--glow-gradient', 'linear-gradient(135deg, #10b981 0%, #34d399 100%)');
+        document.documentElement.style.setProperty('--glow-shadow', '0 0 35px -5px rgba(16, 185, 129, 0.45)');
+        document.documentElement.style.setProperty('--glass-border', 'rgba(16, 185, 129, 0.3)');
+        
+        // Update UI
+        const iconBox = document.getElementById('iconBox');
+        iconBox.innerHTML = '✓';
+        iconBox.style.color = '#34d399';
+        iconBox.style.background = 'rgba(16, 185, 129, 0.15)';
+        iconBox.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+        
+        document.getElementById('title').textContent = 'Login was successful as ' + username;
+        document.getElementById('subtitle').textContent = 'Your identity has been verified. Welcome to DynamicRouter!';
+        document.getElementById('badgeContainer').innerHTML = '{role_badge}';
+        document.getElementById('redirectHint').textContent = 'Redirecting to application in 3 seconds...';
+        
+        const progress = document.getElementById('progress');
+        progress.style.width = '100%';
+        
+        // Redirect after 3 seconds
+        setTimeout(function() {{
+          window.location.replace('/');
+        }}, 2800);
+      }}, 600);
+    }})();
+  </script>
+</body>
+</html>"#)
+}
+
+fn render_callback_error_html(error_message: &str) -> String {
+    format!(r#"<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Authentication Failed - DynamicRouter</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {{
+      --bg-base: #060913;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --glow-primary: #f43f5e;
+      --glow-gradient: linear-gradient(135deg, #f43f5e 0%, #fb7185 100%);
+      --glow-shadow: 0 0 35px -5px rgba(244, 63, 94, 0.4);
+      --glass-bg: rgba(15, 23, 42, 0.75);
+      --glass-border: rgba(244, 63, 94, 0.3);
+    }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      min-height: 100vh;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: radial-gradient(circle at 50% 30%, #1c1017 0%, #060913 75%);
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }}
+    .ambient-glow {{
+      position: fixed;
+      width: 500px;
+      height: 500px;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.25;
+      background: var(--glow-primary);
+      pointer-events: none;
+    }}
+    .glass-card {{
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 460px;
+      background: var(--glass-bg);
+      backdrop-filter: blur(24px);
+      border: 1px solid var(--glass-border);
+      border-radius: 24px;
+      padding: 2.5rem 2rem;
+      text-align: center;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), var(--glow-shadow);
+    }}
+    .icon {{
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 1.5rem;
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2rem;
+      background: rgba(244, 63, 94, 0.15);
+      border: 1px solid rgba(244, 63, 94, 0.4);
+      color: #f87171;
+    }}
+    .title {{ font-family: 'Outfit', sans-serif; font-size: 1.4rem; font-weight: 700; margin-bottom: 0.5rem; }}
+    .subtitle {{ font-size: 0.9rem; color: #fca5a5; line-height: 1.5; margin-bottom: 1.5rem; }}
+    .btn {{
+      display: inline-block;
+      padding: 0.65rem 1.5rem;
+      border-radius: 12px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #ffffff;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      text-decoration: none;
+      transition: background 150ms ease;
+    }}
+    .btn:hover {{ background: rgba(255, 255, 255, 0.2); }}
+  </style>
+</head>
+<body>
+  <div class="ambient-glow"></div>
+  <div class="glass-card">
+    <div class="icon">⚠️</div>
+    <h2 class="title">Authentication Error</h2>
+    <p class="subtitle">{error_message}</p>
+    <a href="/" class="btn">Return to Home</a>
+  </div>
+</body>
+</html>"#)
+}
+
 #[allow(clippy::too_many_lines)]
 async fn handle_callback(
     code: &str,
     state: &str,
     is_browser_get: bool,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    let pending = SESSIONS.take_pkce(state).await.ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Invalid or expired state parameter" })),
-        )
-    })?;
+    let pending = match SESSIONS.take_pkce(state).await {
+        Some(p) => p,
+        None => {
+            if is_browser_get {
+                let html = render_callback_error_html("Invalid or expired state parameter. Please try logging in again.");
+                return Ok((
+                    StatusCode::BAD_REQUEST,
+                    [(CONTENT_TYPE, "text/html; charset=utf-8")],
+                    Html(html),
+                ).into_response());
+            }
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "Invalid or expired state parameter" })),
+            ));
+        }
+    };
 
     let issuer = CONFIG.oidc_issuer_url.as_deref().unwrap_or_default();
     let discovery_url = CONFIG.oidc_discovery_url.as_deref();
     let client_id = CONFIG.oidc_client_id.as_deref().unwrap_or_default();
 
-    let discovery = OIDC
-        .get_discovery(issuer, discovery_url)
-        .await
-        .map_err(|e| {
-            (
+    let discovery = match OIDC.get_discovery(issuer, discovery_url).await {
+        Ok(d) => d,
+        Err(e) => {
+            if is_browser_get {
+                let html = render_callback_error_html(&format!("OIDC discovery failed: {e}"));
+                return Ok((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    [(CONTENT_TYPE, "text/html; charset=utf-8")],
+                    Html(html),
+                ).into_response());
+            }
+            return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": format!("OIDC discovery failed: {e}") })),
-            )
-        })?;
+            ));
+        }
+    };
 
-    let token_res = OIDC
+    let token_res = match OIDC
         .exchange_code(
             &discovery.token_endpoint,
             client_id,
@@ -182,13 +549,24 @@ async fn handle_callback(
             &pending.redirect_uri,
         )
         .await
-        .map_err(|e| {
+    {
+        Ok(t) => t,
+        Err(e) => {
             error!("Token exchange failed: {e}");
-            (
+            if is_browser_get {
+                let html = render_callback_error_html(&format!("Token exchange failed: {e}"));
+                return Ok((
+                    StatusCode::BAD_REQUEST,
+                    [(CONTENT_TYPE, "text/html; charset=utf-8")],
+                    Html(html),
+                ).into_response());
+            }
+            return Err((
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": format!("Token exchange failed: {e}") })),
-            )
-        })?;
+            ));
+        }
+    };
 
     let mut claims = None;
     if let Some(ref id_token) = token_res.id_token
@@ -221,46 +599,54 @@ async fn handle_callback(
     }
 
     let claims = claims.unwrap_or_default();
-    let username = claims
-        .preferred_username
-        .or_else(|| claims.email.clone())
-        .or(claims.sub)
-        .unwrap_or_else(|| "oidc_user".to_string());
-
+    let preferred_username = claims.preferred_username.clone();
     let email = claims.email.clone();
     let name = claims.name.clone();
+    let sub = claims.sub.clone();
     let roles = claims.roles.unwrap_or_default();
 
-    // Check admin status:
-    // 1. Is user in DB and has is_admin == 1?
+    let username = preferred_username
+        .as_deref()
+        .or(email.as_deref())
+        .or(sub.as_deref())
+        .unwrap_or("oidc_user")
+        .to_string();
+
+    // Check admin status against all potential identifier claims
+    let config_admin = CONFIG.is_user_admin_by_config(&username)
+        || preferred_username.as_deref().is_some_and(|u| CONFIG.is_user_admin_by_config(u))
+        || email.as_deref().is_some_and(|e| CONFIG.is_user_admin_by_config(e))
+        || sub.as_deref().is_some_and(|s| CONFIG.is_user_admin_by_config(s))
+        || name.as_deref().is_some_and(|n| CONFIG.is_user_admin_by_config(n));
+
+    // Check admin status against roles (case-insensitively)
+    let role_admin = roles.iter().any(|r| {
+        let r_clean = r.trim().to_lowercase();
+        r_clean == "admin"
+            || r_clean == "administrator"
+            || CONFIG
+                .oidc_admin_roles
+                .iter()
+                .any(|ar| ar.trim().eq_ignore_ascii_case(r.trim()))
+    });
+
     let existing_db_user = get_user_by_username(&username).await.ok().flatten();
     let db_admin = existing_db_user.as_ref().is_some_and(|u| u.is_admin);
 
-    // 2. Is username or email in CONFIG.oidc_admin_users?
-    let config_admin = CONFIG.is_user_admin_by_config(&username)
-        || email.as_deref().is_some_and(|e| CONFIG.is_user_admin_by_config(e));
-
-    // 3. Does user have a configured admin role?
-    let role_admin = roles
-        .iter()
-        .any(|r| CONFIG.oidc_admin_roles.contains(r) || r.to_lowercase() == "admin");
-
     let is_admin = db_admin || config_admin || role_admin;
 
-    // Create or ensure user exists in database
-    if existing_db_user.is_none() {
-        if let Err(e) = create_user(&username, None, None, is_admin).await {
-            error!("Failed to auto-create user in database: {e}");
-        }
-    } else if (config_admin || role_admin) && !db_admin {
-        // Upgrade user to admin if role/config requires it
-        let _ = create_user(
-            &username,
-            existing_db_user.as_ref().and_then(|u| u.limit_to_models.as_ref()),
-            existing_db_user.as_ref().and_then(|u| u.log_request_body),
-            true,
-        )
-        .await;
+    info!("User '{username}' successfully authenticated via OIDC (is_admin: {is_admin})");
+
+    // Create or update user in database with full admin flag
+    if let Err(e) = create_user(
+        &username,
+        existing_db_user.as_ref().and_then(|u| u.limit_to_models.as_ref()),
+        existing_db_user.as_ref().and_then(|u| u.log_request_body),
+        is_admin,
+    )
+    .await
+    {
+        error!("Failed to auto-create/update user in database: {e}");
     }
 
     let ttl_secs = token_res.expires_in.unwrap_or(86400 * 7);
@@ -282,7 +668,13 @@ async fn handle_callback(
     );
 
     if is_browser_get {
-        let mut response = Redirect::to("/").into_response();
+        let html = render_callback_success_html(&username, is_admin, &session_token);
+        let mut response = (
+            StatusCode::OK,
+            [(CONTENT_TYPE, "text/html; charset=utf-8")],
+            Html(html),
+        ).into_response();
+
         response
             .headers_mut()
             .insert(SET_COOKIE, cookie_header.parse().unwrap());
@@ -313,25 +705,37 @@ async fn auth_callback_get(
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     if let Some(err) = query.error {
         let desc = query.error_description.unwrap_or_default();
-        return Err((
+        let html = render_callback_error_html(&format!("OIDC authorization error: {err} ({desc})"));
+        return Ok((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": format!("OIDC authorization error: {err} ({desc})") })),
-        ));
+            [(CONTENT_TYPE, "text/html; charset=utf-8")],
+            Html(html),
+        ).into_response());
     }
 
-    let code = query.code.ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Missing code parameter" })),
-        )
-    })?;
+    let code = match query.code {
+        Some(c) => c,
+        None => {
+            let html = render_callback_error_html("Missing code parameter from identity provider.");
+            return Ok((
+                StatusCode::BAD_REQUEST,
+                [(CONTENT_TYPE, "text/html; charset=utf-8")],
+                Html(html),
+            ).into_response());
+        }
+    };
 
-    let state = query.state.ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Missing state parameter" })),
-        )
-    })?;
+    let state = match query.state {
+        Some(s) => s,
+        None => {
+            let html = render_callback_error_html("Missing state parameter from identity provider.");
+            return Ok((
+                StatusCode::BAD_REQUEST,
+                [(CONTENT_TYPE, "text/html; charset=utf-8")],
+                Html(html),
+            ).into_response());
+        }
+    };
 
     handle_callback(&code, &state, true).await
 }

@@ -1,0 +1,354 @@
+use crate::api::{
+    delete_admin_openai_api, fetch_admin_openai_apis, save_admin_openai_api,
+};
+use crate::components::icons::*;
+use crate::components::{GlassBadge, GlassCard, GlassModal};
+use crate::models::OpenAiApiRecord;
+use crate::state::Toast;
+use dioxus::prelude::*;
+use std::collections::HashSet;
+
+fn load_apis_action(
+    mut is_loading: Signal<bool>,
+    mut apis: Signal<Vec<OpenAiApiRecord>>,
+    mut toasts: Signal<Vec<Toast>>,
+) {
+    is_loading.set(true);
+    spawn(async move {
+        match fetch_admin_openai_apis().await {
+            Ok(list) => apis.set(list),
+            Err(e) => {
+                toasts.write().push(Toast {
+                    id: js_sys::Date::now() as u64,
+                    message: format!("Failed to fetch OpenAI APIs: {e}"),
+                    is_error: true,
+                });
+            }
+        }
+        is_loading.set(false);
+    });
+}
+
+#[component]
+pub fn AdminOpenAiApisView(toasts: Signal<Vec<Toast>>) -> Element {
+    let apis = use_signal(Vec::<OpenAiApiRecord>::new);
+    let is_loading = use_signal(|| false);
+    let mut editing_api = use_signal(|| Option::<(OpenAiApiRecord, bool)>::None);
+
+    // Form inputs
+    let mut form_id = use_signal(String::new);
+    let mut form_url = use_signal(String::new);
+    let mut form_token = use_signal(String::new);
+    let mut form_prefix = use_signal(String::new);
+    let mut form_models = use_signal(String::new);
+    let mut form_timeout = use_signal(String::new);
+
+    let _ = use_resource(move || async move {
+        load_apis_action(is_loading, apis, toasts);
+    });
+
+    let open_create_modal = move |_| {
+        form_id.set(String::new());
+        form_url.set("https://api.openai.com/v1".to_string());
+        form_token.set(String::new());
+        form_prefix.set(String::new());
+        form_models.set(String::new());
+        form_timeout.set(String::new());
+
+        editing_api.set(Some((
+            OpenAiApiRecord {
+                id: String::new(),
+                url: "https://api.openai.com/v1".to_string(),
+                token: None,
+                prefix: None,
+                models: None,
+                timeout: None,
+                headers: None,
+            },
+            true,
+        )));
+    };
+
+    let save_api = move |_| {
+        let (_, is_new) = match editing_api.read().clone() {
+            Some(m) => m,
+            None => return,
+        };
+
+        let id = form_id.read().trim().to_string();
+        let url = form_url.read().trim().to_string();
+        if id.is_empty() || url.is_empty() {
+            return;
+        }
+
+        let token = if form_token.read().trim().is_empty() {
+            None
+        } else {
+            Some(form_token.read().trim().to_string())
+        };
+
+        let prefix = if form_prefix.read().trim().is_empty() {
+            None
+        } else {
+            Some(form_prefix.read().trim().to_string())
+        };
+
+        let timeout = form_timeout.read().trim().parse::<u32>().ok();
+
+        let models = if form_models.read().trim().is_empty() {
+            None
+        } else {
+            Some(
+                form_models
+                    .read()
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect::<HashSet<_>>(),
+            )
+        };
+
+        let payload = OpenAiApiRecord {
+            id,
+            url,
+            token,
+            prefix,
+            models,
+            timeout,
+            headers: None,
+        };
+
+        spawn(async move {
+            match save_admin_openai_api(&payload, is_new).await {
+                Ok(_) => {
+                    toasts.write().push(Toast {
+                        id: js_sys::Date::now() as u64,
+                        message: "OpenAI upstream saved.".to_string(),
+                        is_error: false,
+                    });
+                    editing_api.set(None);
+                    load_apis_action(is_loading, apis, toasts);
+                }
+                Err(err) => {
+                    toasts.write().push(Toast {
+                        id: js_sys::Date::now() as u64,
+                        message: err,
+                        is_error: true,
+                    });
+                }
+            }
+        });
+    };
+
+    let on_delete_api = move |id: String| {
+        spawn(async move {
+            match delete_admin_openai_api(&id).await {
+                Ok(_) => {
+                    toasts.write().push(Toast {
+                        id: js_sys::Date::now() as u64,
+                        message: "OpenAI upstream deleted.".to_string(),
+                        is_error: false,
+                    });
+                    load_apis_action(is_loading, apis, toasts);
+                }
+                Err(err) => {
+                    toasts.write().push(Toast {
+                        id: js_sys::Date::now() as u64,
+                        message: err,
+                        is_error: true,
+                    });
+                }
+            }
+        });
+    };
+
+    rsx! {
+        div {
+            class: "flex flex-col gap-4",
+            
+            GlassCard {
+                div {
+                    class: "card-header",
+                    div {
+                        h2 {
+                            class: "card-title",
+                            IconGlobe { size: 20 }
+                            span { "OpenAI-Compatible Upstream Providers" }
+                        }
+                        p { class: "card-description", "Connect external inference providers (OpenAI, Groq, Together, DeepInfra, OpenRouter) to route models transparently." }
+                    }
+                    button {
+                        class: "glass-btn btn-primary",
+                        onclick: open_create_modal,
+                        IconPlus { size: 16 }
+                        span { "Add Upstream Provider" }
+                    }
+                }
+
+                div {
+                    class: "glass-table-container",
+                    table {
+                        class: "glass-table",
+                        thead {
+                            tr {
+                                th { "Provider ID" }
+                                th { "Endpoint URL" }
+                                th { "Prefix" }
+                                th { "Models" }
+                                th { class: "text-right", "Actions" }
+                            }
+                        }
+                        tbody {
+                            if apis.read().is_empty() {
+                                tr {
+                                    td {
+                                        colspan: 5,
+                                        class: "text-muted",
+                                        style: "text-align: center; padding: 2rem;",
+                                        if *is_loading.read() { "Loading upstreams..." } else { "No upstream providers configured." }
+                                    }
+                                }
+                            }
+                            for api in apis.read().iter() {
+                                tr {
+                                    key: "{api.id}",
+                                    td { span { class: "font-mono font-bold text-sm", "{api.id}" } }
+                                    td { span { class: "font-mono text-xs text-muted", "{api.url}" } }
+                                    td {
+                                        if let Some(ref p) = api.prefix {
+                                            GlassBadge { "{p}" }
+                                        } else {
+                                            span { class: "text-muted text-xs", "—" }
+                                        }
+                                    }
+                                    td {
+                                        if let Some(ref m) = api.models {
+                                            GlassBadge { variant: "glow", "{m.len()} models" }
+                                        } else {
+                                            GlassBadge { "Dynamic / All" }
+                                        }
+                                    }
+                                    td {
+                                        class: "text-right",
+                                        div {
+                                            class: "flex items-center justify-end gap-2",
+                                            button {
+                                                class: "glass-btn btn-secondary btn-sm",
+                                                onclick: {
+                                                    let a = api.clone();
+                                                    move |_| {
+                                                        form_id.set(a.id.clone());
+                                                        form_url.set(a.url.clone());
+                                                        form_token.set(a.token.clone().unwrap_or_default());
+                                                        form_prefix.set(a.prefix.clone().unwrap_or_default());
+                                                        form_models.set(
+                                                            a.models
+                                                                .as_ref()
+                                                                .map(|m| m.iter().cloned().collect::<Vec<_>>().join(", "))
+                                                                .unwrap_or_default(),
+                                                        );
+                                                        form_timeout.set(a.timeout.map(|t| t.to_string()).unwrap_or_default());
+
+                                                        editing_api.set(Some((a.clone(), false)));
+                                                    }
+                                                },
+                                                "Edit"
+                                            }
+                                            button {
+                                                class: "glass-btn btn-danger btn-sm",
+                                                onclick: {
+                                                    let id = api.id.clone();
+                                                    move |_| on_delete_api(id.clone())
+                                                },
+                                                "Delete"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Modal
+            if let Some((_, is_new)) = editing_api.read().clone() {
+                GlassModal {
+                    title: if is_new { "Add Upstream Provider".to_string() } else { format!("Edit Provider: {}", form_id.read()) },
+                    on_close: move |_| editing_api.set(None),
+                    div {
+                        class: "flex flex-col gap-3",
+                        
+                        div {
+                            class: "form-group",
+                            label { class: "form-label", "Provider ID (e.g. openrouter, groq)" }
+                            input {
+                                class: "glass-input font-mono",
+                                disabled: !is_new,
+                                value: "{form_id.read()}",
+                                oninput: move |evt| form_id.set(evt.value()),
+                            }
+                        }
+
+                        div {
+                            class: "form-group",
+                            label { class: "form-label", "Endpoint Base URL" }
+                            input {
+                                class: "glass-input font-mono",
+                                placeholder: "https://api.openai.com/v1",
+                                value: "{form_url.read()}",
+                                oninput: move |evt| form_url.set(evt.value()),
+                            }
+                        }
+
+                        div {
+                            class: "form-group",
+                            label { class: "form-label", "API Secret Token (Optional)" }
+                            input {
+                                r#type: "password",
+                                class: "glass-input",
+                                value: "{form_token.read()}",
+                                oninput: move |evt| form_token.set(evt.value()),
+                            }
+                        }
+
+                        div {
+                            class: "form-group",
+                            label { class: "form-label", "Model Prefix (Optional, e.g. 'groq/' or 'openai/')" }
+                            input {
+                                class: "glass-input",
+                                value: "{form_prefix.read()}",
+                                oninput: move |evt| form_prefix.set(evt.value()),
+                            }
+                        }
+
+                        div {
+                            class: "form-group",
+                            label { class: "form-label", "Handled Models (comma-separated, e.g. gpt-4o, claude-3.5-sonnet)" }
+                            textarea {
+                                class: "glass-textarea",
+                                placeholder: "gpt-4o, gpt-4o-mini",
+                                value: "{form_models.read()}",
+                                oninput: move |evt| form_models.set(evt.value()),
+                            }
+                        }
+
+                        div {
+                            class: "modal-footer",
+                            button {
+                                class: "glass-btn btn-secondary",
+                                onclick: move |_| editing_api.set(None),
+                                "Cancel"
+                            }
+                            button {
+                                class: "glass-btn btn-primary",
+                                onclick: save_api,
+                                "Save Provider"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

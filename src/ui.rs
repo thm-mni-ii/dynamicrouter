@@ -1,42 +1,46 @@
-use axum::Router;
-use axum::http::HeaderName;
+use axum::body::Body;
+use axum::extract::Request;
+use axum::http::{HeaderValue, StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use reqwest::header;
+use axum::Router;
+use rust_embed::RustEmbed;
 
-type StaticFile = ([(HeaderName, &'static str); 1], &'static [u8]);
+#[derive(RustEmbed)]
+#[folder = "ui/dist/"]
+struct Asset;
 
-async fn serve_index() -> StaticFile {
-    (
-        [(header::CONTENT_TYPE, "text/html")],
-        include_bytes!("../ui/dist/index.html"),
-    )
-}
+pub async fn static_handler(req: Request) -> impl IntoResponse {
+    let path = req.uri().path().trim_start_matches('/');
 
-async fn serve_css() -> StaticFile {
-    (
-        [(header::CONTENT_TYPE, "text/css")],
-        include_bytes!("../ui/dist/pico.lime.min.css"),
-    )
-}
+    // If path is empty, serve index.html
+    let lookup_path = if path.is_empty() { "index.html" } else { path };
 
-async fn serve_js() -> StaticFile {
-    (
-        [(header::CONTENT_TYPE, "text/javascript")],
-        include_bytes!("../ui/dist/ui.js"),
-    )
-}
+    // Try finding the exact static asset first
+    if let Some(file) = Asset::get(lookup_path) {
+        let mime = mime_guess::from_path(lookup_path).first_or_octet_stream();
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, HeaderValue::from_str(mime.as_ref()).unwrap_or(HeaderValue::from_static("application/octet-stream")))
+            .body(Body::from(file.data))
+            .unwrap();
+    }
 
-async fn serve_wasm() -> StaticFile {
-    (
-        [(header::CONTENT_TYPE, "application/wasm")],
-        include_bytes!("../ui/dist/ui_bg.wasm"),
-    )
+    // SPA fallback: for all non-asset routes (e.g. /chat, /tokens, /admin/models), serve index.html
+    if let Some(index) = Asset::get("index.html") {
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"))
+            .body(Body::from(index.data))
+            .unwrap();
+    }
+
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .body(Body::from("404 Not Found"))
+        .unwrap()
 }
 
 pub fn new_static_router() -> Router {
-    Router::new()
-        .route("/", get(serve_index))
-        .route("/pico.lime.min.css", get(serve_css))
-        .route("/ui.js", get(serve_js))
-        .route("/ui_bg.wasm", get(serve_wasm))
+    Router::new().fallback(get(static_handler))
 }

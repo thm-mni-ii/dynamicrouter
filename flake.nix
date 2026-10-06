@@ -36,7 +36,8 @@
               cargo
               rustc
               trunk-ng
-              wasm-bindgen-cli_0_2_106
+              wasm-bindgen-cli
+              dioxus-cli
               lld
               rustPlatform.cargoSetupHook
             ];
@@ -125,6 +126,7 @@
                 lld
                 trunk-ng
                 wasm-bindgen-cli
+                dioxus-cli
               ]
               ++ sharedNativeDeps pkgs;
 

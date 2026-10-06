@@ -1,7 +1,10 @@
+mod api;
 mod app;
-
-use leptos::mount::mount_to_body;
+mod components;
+mod models;
+mod state;
+mod views;
 
 fn main() {
-    mount_to_body(app::App);
+    dioxus::launch(app::App);
 }
