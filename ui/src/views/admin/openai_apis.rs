@@ -1,8 +1,8 @@
 use crate::api::{
-    delete_admin_openai_api, fetch_admin_openai_apis, save_admin_openai_api,
+    delete_admin_openai_api, fetch_admin_openai_apis, fetch_v1_models, save_admin_openai_api,
 };
 use crate::components::icons::*;
-use crate::components::{GlassBadge, GlassCard, GlassModal};
+use crate::components::{ChipInput, GlassBadge, GlassCard, GlassModal};
 use crate::models::OpenAiApiRecord;
 use crate::state::Toast;
 use dioxus::prelude::*;
@@ -32,6 +32,7 @@ fn load_apis_action(
 #[component]
 pub fn AdminOpenAiApisView(toasts: Signal<Vec<Toast>>) -> Element {
     let apis = use_signal(Vec::<OpenAiApiRecord>::new);
+    let mut model_suggestions = use_signal(Vec::<String>::new);
     let is_loading = use_signal(|| false);
     let mut editing_api = use_signal(|| Option::<(OpenAiApiRecord, bool)>::None);
 
@@ -40,11 +41,34 @@ pub fn AdminOpenAiApisView(toasts: Signal<Vec<Toast>>) -> Element {
     let mut form_url = use_signal(String::new);
     let mut form_token = use_signal(String::new);
     let mut form_prefix = use_signal(String::new);
-    let mut form_models = use_signal(String::new);
+    let mut form_models = use_signal(Vec::<String>::new);
     let mut form_timeout = use_signal(String::new);
 
     let _ = use_resource(move || async move {
         load_apis_action(is_loading, apis, toasts);
+
+        let mut defaults = vec![
+            "gpt-4o".to_string(),
+            "gpt-4o-mini".to_string(),
+            "o1".to_string(),
+            "o1-mini".to_string(),
+            "o3-mini".to_string(),
+            "claude-3-5-sonnet-latest".to_string(),
+            "claude-3-5-haiku-latest".to_string(),
+            "gemini-2.0-flash".to_string(),
+            "gemini-2.0-pro-exp-02-05".to_string(),
+            "deepseek-ai/DeepSeek-R1".to_string(),
+            "deepseek-ai/DeepSeek-V3".to_string(),
+        ];
+        if let Ok(models) = fetch_v1_models().await {
+            for m in models {
+                if !defaults.contains(&m.id) {
+                    defaults.push(m.id);
+                }
+            }
+        }
+        defaults.sort();
+        model_suggestions.set(defaults);
     });
 
     let open_create_modal = move |_| {
@@ -52,7 +76,7 @@ pub fn AdminOpenAiApisView(toasts: Signal<Vec<Toast>>) -> Element {
         form_url.set("https://api.openai.com/v1".to_string());
         form_token.set(String::new());
         form_prefix.set(String::new());
-        form_models.set(String::new());
+        form_models.set(Vec::new());
         form_timeout.set(String::new());
 
         editing_api.set(Some((
@@ -95,17 +119,10 @@ pub fn AdminOpenAiApisView(toasts: Signal<Vec<Toast>>) -> Element {
 
         let timeout = form_timeout.read().trim().parse::<u32>().ok();
 
-        let models = if form_models.read().trim().is_empty() {
+        let models = if form_models.read().is_empty() {
             None
         } else {
-            Some(
-                form_models
-                    .read()
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect::<HashSet<_>>(),
-            )
+            Some(form_models.read().iter().cloned().collect::<HashSet<_>>())
         };
 
         let payload = OpenAiApiRecord {
@@ -241,12 +258,12 @@ pub fn AdminOpenAiApisView(toasts: Signal<Vec<Toast>>) -> Element {
                                                         form_url.set(a.url.clone());
                                                         form_token.set(a.token.clone().unwrap_or_default());
                                                         form_prefix.set(a.prefix.clone().unwrap_or_default());
-                                                        form_models.set(
-                                                            a.models
-                                                                .as_ref()
-                                                                .map(|m| m.iter().cloned().collect::<Vec<_>>().join(", "))
-                                                                .unwrap_or_default(),
-                                                        );
+                                                        let mut m_list: Vec<String> = a.models
+                                                            .as_ref()
+                                                            .map(|m| m.iter().cloned().collect())
+                                                            .unwrap_or_default();
+                                                        m_list.sort();
+                                                        form_models.set(m_list);
                                                         form_timeout.set(a.timeout.map(|t| t.to_string()).unwrap_or_default());
 
                                                         editing_api.set(Some((a.clone(), false)));
@@ -324,13 +341,13 @@ pub fn AdminOpenAiApisView(toasts: Signal<Vec<Toast>>) -> Element {
 
                         div {
                             class: "form-group",
-                            label { class: "form-label", "Handled Models (comma-separated, e.g. gpt-4o, claude-3.5-sonnet)" }
-                            textarea {
-                                class: "glass-textarea",
-                                placeholder: "gpt-4o, gpt-4o-mini",
-                                value: "{form_models.read()}",
-                                oninput: move |evt| form_models.set(evt.value()),
+                            label { class: "form-label", "Handled Models (e.g. gpt-4o, claude-3.5-sonnet)" }
+                            ChipInput {
+                                values: form_models,
+                                suggestions: model_suggestions.read().clone(),
+                                placeholder: "e.g. gpt-4o, gpt-4o-mini...",
                             }
+                            span { class: "form-hint", "Press Enter or comma to add each model ID." }
                         }
 
                         div {

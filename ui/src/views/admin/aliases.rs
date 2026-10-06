@@ -1,8 +1,8 @@
 use crate::api::{
-    delete_admin_alias, fetch_admin_aliases, save_admin_alias,
+    delete_admin_alias, fetch_admin_aliases, fetch_v1_models, save_admin_alias,
 };
 use crate::components::icons::*;
-use crate::components::{GlassBadge, GlassCard, GlassModal};
+use crate::components::{ChipInput, GlassBadge, GlassCard, GlassModal};
 use crate::models::AliasRecord;
 use crate::state::Toast;
 use dioxus::prelude::*;
@@ -31,19 +31,26 @@ fn load_aliases_action(
 #[component]
 pub fn AdminAliasesView(toasts: Signal<Vec<Toast>>) -> Element {
     let aliases = use_signal(Vec::<AliasRecord>::new);
+    let mut model_suggestions = use_signal(Vec::<String>::new);
     let is_loading = use_signal(|| false);
     let mut editing_alias = use_signal(|| Option::<(AliasRecord, bool)>::None);
 
     let mut form_alias = use_signal(String::new);
-    let mut form_target = use_signal(String::new);
+    let mut form_target = use_signal(Vec::<String>::new);
 
     let _ = use_resource(move || async move {
         load_aliases_action(is_loading, aliases, toasts);
+
+        if let Ok(models) = fetch_v1_models().await {
+            let mut list: Vec<String> = models.into_iter().map(|m| m.id).collect();
+            list.sort();
+            model_suggestions.set(list);
+        }
     });
 
     let open_create_modal = move |_| {
         form_alias.set(String::new());
-        form_target.set(String::new());
+        form_target.set(Vec::new());
         editing_alias.set(Some((
             AliasRecord {
                 alias: String::new(),
@@ -60,7 +67,7 @@ pub fn AdminAliasesView(toasts: Signal<Vec<Toast>>) -> Element {
         };
 
         let alias = form_alias.read().trim().to_string();
-        let target = form_target.read().trim().to_string();
+        let target = form_target.read().first().cloned().unwrap_or_default().trim().to_string();
         if alias.is_empty() || target.is_empty() {
             return;
         }
@@ -173,7 +180,7 @@ pub fn AdminAliasesView(toasts: Signal<Vec<Toast>>) -> Element {
                                                     let a = item.clone();
                                                     move |_| {
                                                         form_alias.set(a.alias.clone());
-                                                        form_target.set(a.target.clone());
+                                                        form_target.set(vec![a.target.clone()]);
                                                         editing_alias.set(Some((a.clone(), false)));
                                                     }
                                                 },
@@ -219,11 +226,11 @@ pub fn AdminAliasesView(toasts: Signal<Vec<Toast>>) -> Element {
                         div {
                             class: "form-group",
                             label { class: "form-label", "Target Model Identifier" }
-                            input {
-                                class: "glass-input font-mono",
-                                placeholder: "meta-llama/Llama-3-8B-Instruct",
-                                value: "{form_target.read()}",
-                                oninput: move |evt| form_target.set(evt.value()),
+                            ChipInput {
+                                values: form_target,
+                                suggestions: model_suggestions.read().clone(),
+                                max_items: Some(1),
+                                placeholder: "Select target model...",
                             }
                         }
 

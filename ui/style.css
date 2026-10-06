@@ -1281,3 +1281,169 @@ html, body {
 .text-sm { font-size: 0.875rem; }
 .text-xs { font-size: 0.75rem; }
 .font-mono { font-family: var(--font-mono); }
+
+/* --------------------------------------------------------------------------
+   Chips & Autocomplete Components
+   -------------------------------------------------------------------------- */
+.glass-chip-input-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.glass-chip-input-container {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.65rem;
+  min-height: 42px;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 11px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: all var(--transition-fast);
+  width: 100%;
+  cursor: text;
+}
+
+.glass-chip-input-container:focus-within {
+  border-color: var(--glass-border-focus);
+  box-shadow: 0 0 0 3px rgba(var(--glow-rgb), 0.18);
+}
+
+.glass-chip-input-container.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.glass-chip-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.45rem 0.2rem 0.6rem;
+  border-radius: 6px;
+  background: var(--glow-surface);
+  border: 1px solid var(--glow-border);
+  color: var(--text-main);
+  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  line-height: 1.2;
+  user-select: none;
+  max-width: 100%;
+  word-break: break-all;
+  transition: all var(--transition-fast);
+}
+
+.glass-chip-item:hover {
+  border-color: var(--glow-primary);
+}
+
+.chip-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chip-remove-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  padding: 2px;
+  border-radius: 4px;
+  transition: all var(--transition-fast);
+  margin-left: 2px;
+}
+
+.chip-remove-btn:hover {
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.chip-text-input {
+  flex: 1 1 80px;
+  min-width: 60px;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  padding: 0.2rem 0.3rem;
+}
+
+.chip-text-input::placeholder {
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+}
+
+.glass-autocomplete-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.glass-autocomplete-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 150;
+  background: var(--glass-bg);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--glass-border-hover);
+  border-radius: 10px;
+  box-shadow: var(--glass-shadow-lg);
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: fadeInDown 0.12s ease-out;
+}
+
+.autocomplete-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.45rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.825rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.autocomplete-option:hover,
+.autocomplete-option.active {
+  background: var(--glow-surface);
+  color: var(--glow-primary);
+  font-weight: 500;
+}
+
+
+
+.autocomplete-option-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.autocomplete-option-badge {
+  font-size: 0.68rem;
+  font-family: var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: var(--badge-bg);
+  border: 1px solid var(--badge-border);
+  color: var(--text-dim);
+}
+

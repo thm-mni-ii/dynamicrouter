@@ -1,6 +1,10 @@
-use crate::api::{cleanup_admin_system_logs, fetch_admin_system_logs};
+use crate::api::{
+    cleanup_admin_system_logs, fetch_admin_system_logs, fetch_admin_users, fetch_v1_models,
+};
 use crate::components::icons::*;
-use crate::components::{CodeBlock, GlassBadge, GlassCard, GlassModal};
+use crate::components::{
+    CodeBlock, GlassAutocompleteInput, GlassBadge, GlassCard, GlassModal,
+};
 use crate::models::{PaginatedRequests, RequestLog};
 use crate::state::Toast;
 use dioxus::prelude::*;
@@ -31,8 +35,10 @@ fn load_system_logs_action(
 #[component]
 pub fn AdminSystemLogsView(toasts: Signal<Vec<Toast>>) -> Element {
     let logs_data = use_signal(|| Option::<PaginatedRequests>::None);
-    let mut filter_user = use_signal(String::new);
-    let mut filter_model = use_signal(String::new);
+    let mut user_suggestions = use_signal(Vec::<String>::new);
+    let mut model_suggestions = use_signal(Vec::<String>::new);
+    let filter_user = use_signal(String::new);
+    let filter_model = use_signal(String::new);
     let mut page = use_signal(|| 1i64);
     let is_loading = use_signal(|| false);
     let mut selected_req = use_signal(|| Option::<RequestLog>::None);
@@ -41,6 +47,18 @@ pub fn AdminSystemLogsView(toasts: Signal<Vec<Toast>>) -> Element {
 
     let _ = use_resource(move || async move {
         load_system_logs_action(is_loading, logs_data, filter_user, filter_model, page);
+
+        if let Ok(users) = fetch_admin_users().await {
+            let mut list: Vec<String> = users.into_iter().map(|u| u.username).collect();
+            list.sort();
+            user_suggestions.set(list);
+        }
+
+        if let Ok(models) = fetch_v1_models().await {
+            let mut list: Vec<String> = models.into_iter().map(|m| m.id).collect();
+            list.sort();
+            model_suggestions.set(list);
+        }
     });
 
     let on_cleanup = move |_| {
@@ -107,24 +125,26 @@ pub fn AdminSystemLogsView(toasts: Signal<Vec<Toast>>) -> Element {
                 // Filter Bar
                 div {
                     class: "flex items-center gap-3 mb-4",
-                    input {
-                        class: "glass-input",
+                    div {
                         style: "width: 200px;",
-                        placeholder: "Filter by User...",
-                        value: "{filter_user.read()}",
-                        oninput: move |evt| {
-                            filter_user.set(evt.value());
-                            page.set(1);
+                        GlassAutocompleteInput {
+                            value: filter_user,
+                            suggestions: user_suggestions.read().clone(),
+                            placeholder: "Filter by User...",
+                            on_change: move |_| {
+                                page.set(1);
+                            },
                         }
                     }
-                    input {
-                        class: "glass-input",
-                        style: "width: 220px;",
-                        placeholder: "Filter by Model...",
-                        value: "{filter_model.read()}",
-                        oninput: move |evt| {
-                            filter_model.set(evt.value());
-                            page.set(1);
+                    div {
+                        style: "width: 240px;",
+                        GlassAutocompleteInput {
+                            value: filter_model,
+                            suggestions: model_suggestions.read().clone(),
+                            placeholder: "Filter by Model...",
+                            on_change: move |_| {
+                                page.set(1);
+                            },
                         }
                     }
                     button {

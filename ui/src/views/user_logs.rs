@@ -1,6 +1,8 @@
-use crate::api::fetch_user_logs;
+use crate::api::{fetch_user_logs, fetch_v1_models};
 use crate::components::icons::*;
-use crate::components::{CodeBlock, GlassBadge, GlassCard, GlassModal};
+use crate::components::{
+    CodeBlock, GlassAutocompleteInput, GlassBadge, GlassCard, GlassModal,
+};
 use crate::models::{PaginatedRequests, RequestLog};
 use dioxus::prelude::*;
 
@@ -25,12 +27,19 @@ fn load_user_logs_action(
 #[component]
 pub fn UserLogsView() -> Element {
     let logs_data = use_signal(|| Option::<PaginatedRequests>::None);
-    let mut filter_model = use_signal(String::new);
+    let mut model_suggestions = use_signal(Vec::<String>::new);
+    let filter_model = use_signal(String::new);
     let is_loading = use_signal(|| false);
     let mut selected_req = use_signal(|| Option::<RequestLog>::None);
 
     let _ = use_resource(move || async move {
         load_user_logs_action(is_loading, logs_data, filter_model);
+
+        if let Ok(models) = fetch_v1_models().await {
+            let mut list: Vec<String> = models.into_iter().map(|m| m.id).collect();
+            list.sort();
+            model_suggestions.set(list);
+        }
     });
 
     rsx! {
@@ -50,12 +59,13 @@ pub fn UserLogsView() -> Element {
                     }
                     div {
                         class: "flex items-center gap-2",
-                        input {
-                            class: "glass-input",
-                            style: "width: 200px;",
-                            placeholder: "Filter by Model...",
-                            value: "{filter_model.read()}",
-                            oninput: move |evt| filter_model.set(evt.value()),
+                        div {
+                            style: "width: 220px;",
+                            GlassAutocompleteInput {
+                                value: filter_model,
+                                suggestions: model_suggestions.read().clone(),
+                                placeholder: "Filter by Model...",
+                            }
                         }
                         button {
                             class: "glass-btn btn-secondary",

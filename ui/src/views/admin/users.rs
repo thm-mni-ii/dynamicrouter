@@ -1,8 +1,8 @@
 use crate::api::{
-    create_token_for_user, delete_admin_user, fetch_admin_users, save_admin_user,
+    create_token_for_user, delete_admin_user, fetch_admin_users, fetch_v1_models, save_admin_user,
 };
 use crate::components::icons::*;
-use crate::components::{GlassBadge, GlassCard, GlassModal};
+use crate::components::{ChipInput, GlassBadge, GlassCard, GlassModal};
 use crate::models::{AdminUserRecord, CreatedTokenResponse};
 use crate::state::Toast;
 use dioxus::prelude::*;
@@ -33,6 +33,7 @@ fn load_users_action(
 #[component]
 pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
     let users = use_signal(Vec::<AdminUserRecord>::new);
+    let mut model_suggestions = use_signal(Vec::<String>::new);
     let is_loading = use_signal(|| false);
     let mut editing_user = use_signal(|| Option::<(AdminUserRecord, bool)>::None);
     let mut generated_token = use_signal(|| Option::<CreatedTokenResponse>::None);
@@ -42,18 +43,23 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
     let mut form_username = use_signal(String::new);
     let mut form_is_admin = use_signal(|| false);
     let mut form_log_body = use_signal(|| true);
-    let mut form_models = use_signal(String::new);
+    let mut form_models = use_signal(Vec::<String>::new);
     let mut form_expires_at = use_signal(String::new);
 
     let _ = use_resource(move || async move {
         load_users_action(is_loading, users, toasts);
+        if let Ok(models) = fetch_v1_models().await {
+            let mut list: Vec<String> = models.into_iter().map(|m| m.id).collect();
+            list.sort();
+            model_suggestions.set(list);
+        }
     });
 
     let open_create_modal = move |_| {
         form_username.set(String::new());
         form_is_admin.set(false);
         form_log_body.set(true);
-        form_models.set(String::new());
+        form_models.set(Vec::new());
         form_expires_at.set(String::new());
 
         editing_user.set(Some((
@@ -79,17 +85,10 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
             return;
         }
 
-        let models = if form_models.read().trim().is_empty() {
+        let models = if form_models.read().is_empty() {
             None
         } else {
-            Some(
-                form_models
-                    .read()
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect::<HashSet<_>>(),
-            )
+            Some(form_models.read().iter().cloned().collect::<HashSet<_>>())
         };
 
         let exp_str = form_expires_at.read().trim().to_string();
@@ -312,12 +311,12 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                                                         form_username.set(u.username.clone());
                                                         form_is_admin.set(u.is_admin);
                                                         form_log_body.set(u.log_request_body.unwrap_or(true));
-                                                        form_models.set(
-                                                            u.limit_to_models
-                                                                .as_ref()
-                                                                .map(|m| m.iter().cloned().collect::<Vec<_>>().join(", "))
-                                                                .unwrap_or_default(),
-                                                        );
+                                                        let mut m_list: Vec<String> = u.limit_to_models
+                                                            .as_ref()
+                                                            .map(|m| m.iter().cloned().collect())
+                                                            .unwrap_or_default();
+                                                        m_list.sort();
+                                                        form_models.set(m_list);
 
                                                         if let Some(exp) = u.expires_at {
                                                             let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64((exp * 1000) as f64));
@@ -374,13 +373,13 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
 
                         div {
                             class: "form-group",
-                            label { class: "form-label", "Allowed Models (comma-separated, empty for all)" }
-                            input {
-                                class: "glass-input font-mono",
-                                placeholder: "meta-llama/Llama-3-8B-Instruct, mistralai/Mistral-7B",
-                                value: "{form_models.read()}",
-                                oninput: move |evt| form_models.set(evt.value()),
+                            label { class: "form-label", "Allowed Models (empty for access to all models)" }
+                            ChipInput {
+                                values: form_models,
+                                suggestions: model_suggestions.read().clone(),
+                                placeholder: "Add allowed model...",
                             }
+                            span { class: "form-hint", "Select from known models or enter custom model IDs. Comma or Enter to add." }
                         }
 
                         div {

@@ -3,7 +3,9 @@ use crate::api::{
     fetch_admin_rate_limits, fetch_admin_users, save_admin_rate_limit,
 };
 use crate::components::icons::*;
-use crate::components::{GlassBadge, GlassCard, GlassModal};
+use crate::components::{
+    ChipInput, GlassAutocompleteInput, GlassBadge, GlassCard, GlassModal,
+};
 use crate::models::{AdminModelConfig, AdminUserRecord, RateLimitRecord, RateLimitUsage};
 use crate::state::Toast;
 use dioxus::prelude::*;
@@ -82,12 +84,12 @@ pub fn AdminRateLimitsView(toasts: Signal<Vec<Toast>>) -> Element {
     let is_loading = use_signal(|| false);
 
     let mut editing_rule = use_signal(|| Option::<(RateLimitRecord, bool)>::None);
-    let mut filter_user = use_signal(String::new);
+    let filter_user = use_signal(String::new);
     let mut filter_window = use_signal(String::new);
 
     // Form fields
-    let mut form_user = use_signal(String::new);
-    let mut form_model = use_signal(String::new);
+    let mut form_users = use_signal(Vec::<String>::new);
+    let mut form_models = use_signal(Vec::<String>::new);
     let mut form_window = use_signal(|| "minute".to_string());
     let mut form_unit = use_signal(|| "tokens".to_string());
     let mut form_limit_str = use_signal(|| "100000".to_string());
@@ -97,8 +99,8 @@ pub fn AdminRateLimitsView(toasts: Signal<Vec<Toast>>) -> Element {
     });
 
     let open_create_modal = move |_| {
-        form_user.set(String::new());
-        form_model.set(String::new());
+        form_users.set(Vec::new());
+        form_models.set(Vec::new());
         form_window.set("minute".to_string());
         form_unit.set("tokens".to_string());
         form_limit_str.set("100000".to_string());
@@ -135,50 +137,111 @@ pub fn AdminRateLimitsView(toasts: Signal<Vec<Toast>>) -> Element {
             }
         };
 
-        let u_str = form_user.read().trim().to_string();
-        let user_val = if u_str.is_empty() || u_str == "*" {
-            None
-        } else {
-            Some(u_str)
-        };
+        let window_val = form_window.read().clone();
+        let unit_val = form_unit.read().clone();
 
-        let m_str = form_model.read().trim().to_string();
-        let model_val = if m_str.is_empty() || m_str == "*" {
-            None
-        } else {
-            Some(m_str)
-        };
+        if is_new {
+            let u_list = form_users.read().clone();
+            let user_targets: Vec<Option<String>> = if u_list.is_empty() || u_list.iter().any(|u| u == "*" || u.trim().is_empty()) {
+                vec![None]
+            } else {
+                u_list.into_iter().filter(|u| !u.trim().is_empty()).map(Some).collect()
+            };
 
-        let record = RateLimitRecord {
-            id: current.id,
-            user: user_val,
-            model: model_val,
-            time_window: form_window.read().clone(),
-            limit_value: parsed_limit,
-            unit: form_unit.read().clone(),
-            created_at: current.created_at,
-        };
+            let m_list = form_models.read().clone();
+            let model_targets: Vec<Option<String>> = if m_list.is_empty() || m_list.iter().any(|m| m == "*" || m.trim().is_empty()) {
+                vec![None]
+            } else {
+                m_list.into_iter().filter(|m| !m.trim().is_empty()).map(Some).collect()
+            };
 
-        spawn(async move {
-            match save_admin_rate_limit(&record, is_new).await {
-                Ok(_) => {
-                    toasts.write().push(Toast {
-                        id: js_sys::Date::now() as u64,
-                        message: "Rate limit saved successfully.".to_string(),
-                        is_error: false,
-                    });
-                    editing_rule.set(None);
-                    load_rate_limits_action(is_loading, rules, usages, users_list, models_list, toasts);
+            spawn(async move {
+                let mut created_count = 0;
+                let mut err_msg = None;
+                for u in user_targets {
+                    for m in model_targets.clone() {
+                        let record = RateLimitRecord {
+                            id: String::new(),
+                            user: u.clone(),
+                            model: m.clone(),
+                            time_window: window_val.clone(),
+                            limit_value: parsed_limit,
+                            unit: unit_val.clone(),
+                            created_at: 0,
+                        };
+                        match save_admin_rate_limit(&record, true).await {
+                            Ok(_) => created_count += 1,
+                            Err(e) => err_msg = Some(e),
+                        }
+                    }
                 }
-                Err(err) => {
+
+                if let Some(err) = err_msg {
                     toasts.write().push(Toast {
                         id: js_sys::Date::now() as u64,
-                        message: err,
+                        message: format!("Saved {created_count} rate limit(s), but encountered error: {err}"),
                         is_error: true,
                     });
+                } else {
+                    toasts.write().push(Toast {
+                        id: js_sys::Date::now() as u64,
+                        message: if created_count == 1 {
+                            "Rate limit saved successfully.".to_string()
+                        } else {
+                            format!("{created_count} rate limit policies created successfully.")
+                        },
+                        is_error: false,
+                    });
                 }
-            }
-        });
+                editing_rule.set(None);
+                load_rate_limits_action(is_loading, rules, usages, users_list, models_list, toasts);
+            });
+        } else {
+            let u_str = form_users.read().first().cloned().unwrap_or_default();
+            let user_val = if u_str.is_empty() || u_str == "*" {
+                None
+            } else {
+                Some(u_str)
+            };
+
+            let m_str = form_models.read().first().cloned().unwrap_or_default();
+            let model_val = if m_str.is_empty() || m_str == "*" {
+                None
+            } else {
+                Some(m_str)
+            };
+
+            let record = RateLimitRecord {
+                id: current.id,
+                user: user_val,
+                model: model_val,
+                time_window: window_val,
+                limit_value: parsed_limit,
+                unit: unit_val,
+                created_at: current.created_at,
+            };
+
+            spawn(async move {
+                match save_admin_rate_limit(&record, false).await {
+                    Ok(_) => {
+                        toasts.write().push(Toast {
+                            id: js_sys::Date::now() as u64,
+                            message: "Rate limit updated successfully.".to_string(),
+                            is_error: false,
+                        });
+                        editing_rule.set(None);
+                        load_rate_limits_action(is_loading, rules, usages, users_list, models_list, toasts);
+                    }
+                    Err(err) => {
+                        toasts.write().push(Toast {
+                            id: js_sys::Date::now() as u64,
+                            message: err,
+                            is_error: true,
+                        });
+                    }
+                }
+            });
+        }
     };
 
     let on_delete_rule = move |id: String| {
@@ -315,12 +378,12 @@ pub fn AdminRateLimitsView(toasts: Signal<Vec<Toast>>) -> Element {
                     div {
                         class: "flex items-center gap-2",
                         label { class: "text-xs text-muted", "Filter User:" }
-                        input {
-                            class: "glass-input font-mono text-xs",
-                            style: "width: 160px; padding: 0.25rem 0.5rem;",
+                        GlassAutocompleteInput {
+                            value: filter_user,
+                            suggestions: users_list.read().iter().map(|u| u.username.clone()).collect(),
+                            class: "font-mono text-xs",
+                            style: "width: 160px;",
                             placeholder: "All users...",
-                            value: "{filter_user.read()}",
-                            oninput: move |evt| filter_user.set(evt.value()),
                         }
                     }
 
@@ -449,8 +512,8 @@ pub fn AdminRateLimitsView(toasts: Signal<Vec<Toast>>) -> Element {
                                                         onclick: {
                                                             let r = rule.clone();
                                                             move |_| {
-                                                                form_user.set(r.user.clone().unwrap_or_default());
-                                                                form_model.set(r.model.clone().unwrap_or_default());
+                                                                form_users.set(r.user.as_ref().map(|u| vec![u.clone()]).unwrap_or_default());
+                                                                form_models.set(r.model.as_ref().map(|m| vec![m.clone()]).unwrap_or_default());
                                                                 form_window.set(r.time_window.clone());
                                                                 form_unit.set(r.unit.clone());
                                                                 form_limit_str.set(r.limit_value.to_string());
@@ -497,26 +560,36 @@ pub fn AdminRateLimitsView(toasts: Signal<Vec<Toast>>) -> Element {
 
                                 div {
                                     class: "form-group",
-                                    label { class: "form-label", "Target User" }
-                                    input {
-                                        class: "glass-input font-mono",
-                                        placeholder: "Leave blank or '*' for All Users (Global)...",
-                                        value: "{form_user.read()}",
-                                        oninput: move |evt| form_user.set(evt.value()),
+                                    label { class: "form-label", "Target User(s)" }
+                                    ChipInput {
+                                        values: form_users,
+                                        suggestions: {
+                                            let mut list = vec!["*".to_string()];
+                                            for u in users_list.read().iter() {
+                                                list.push(u.username.clone());
+                                            }
+                                            list
+                                        },
+                                        placeholder: "* for All Users, or select specific user(s)...",
                                     }
-                                    span { class: "form-hint", "Assign to a specific username or apply as global default." }
+                                    span { class: "form-hint", "Select username(s) or leave empty/'*' for all users." }
                                 }
 
                                 div {
                                     class: "form-group",
-                                    label { class: "form-label", "Target Model" }
-                                    input {
-                                        class: "glass-input font-mono",
-                                        placeholder: "Leave blank or '*' for All Models Combined...",
-                                        value: "{form_model.read()}",
-                                        oninput: move |evt| form_model.set(evt.value()),
+                                    label { class: "form-label", "Target Model(s)" }
+                                    ChipInput {
+                                        values: form_models,
+                                        suggestions: {
+                                            let mut list = vec!["*".to_string()];
+                                            for m in models_list.read().iter() {
+                                                list.push(m.id.clone());
+                                            }
+                                            list
+                                        },
+                                        placeholder: "* for All Models, or select specific model(s)...",
                                     }
-                                    span { class: "form-hint", "e.g., meta-llama/Llama-3-8B-Instruct or '*' for all models." }
+                                    span { class: "form-hint", "Select model(s) or leave empty/'*' for all models." }
                                 }
 
                                 div {

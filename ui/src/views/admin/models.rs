@@ -1,6 +1,9 @@
-use crate::api::{delete_admin_model, fetch_admin_models, save_admin_model};
+use crate::api::{
+    delete_admin_model, fetch_admin_backends, fetch_admin_models, fetch_admin_openai_apis,
+    fetch_admin_users, save_admin_model,
+};
 use crate::components::icons::*;
-use crate::components::{GlassBadge, GlassCard, GlassModal};
+use crate::components::{ChipInput, GlassBadge, GlassCard, GlassModal};
 use crate::models::{
     AdminModelConfig, ModelHandlerConfig, OpenAiHandlerConf, SpawnerConfig,
 };
@@ -32,6 +35,9 @@ fn load_models_action(
 #[component]
 pub fn AdminModelsView(toasts: Signal<Vec<Toast>>) -> Element {
     let models = use_signal(Vec::<AdminModelConfig>::new);
+    let mut user_suggestions = use_signal(Vec::<String>::new);
+    let mut backend_suggestions = use_signal(Vec::<String>::new);
+    let mut openai_api_suggestions = use_signal(Vec::<String>::new);
     let is_loading = use_signal(|| false);
     let mut editing_model = use_signal(|| Option::<(AdminModelConfig, bool)>::None);
 
@@ -40,23 +46,51 @@ pub fn AdminModelsView(toasts: Signal<Vec<Toast>>) -> Element {
     let mut form_name = use_signal(String::new);
     let mut form_timeout = use_signal(String::new);
     let mut form_hidden = use_signal(|| false);
-    let mut form_users = use_signal(String::new);
+    let mut form_users = use_signal(Vec::<String>::new);
     let mut form_handler_type = use_signal(|| "spawner".to_string());
     
     // Spawner fields
-    let mut form_backends = use_signal(String::new);
+    let mut form_backends = use_signal(Vec::<String>::new);
     let mut form_min_scale = use_signal(|| 0u32);
     let mut form_max_scale = use_signal(|| 1u32);
     let mut form_queue_threshold = use_signal(|| 1u32);
 
     // OpenAI fields
-    let mut form_openai_api = use_signal(String::new);
+    let mut form_openai_api = use_signal(Vec::<String>::new);
     let mut form_openai_url = use_signal(String::new);
     let mut form_openai_token = use_signal(String::new);
     let mut form_openai_model = use_signal(String::new);
 
     let _ = use_resource(move || async move {
         load_models_action(is_loading, models, toasts);
+
+        if let Ok(users) = fetch_admin_users().await {
+            let mut list: Vec<String> = users.into_iter().map(|u| u.username).collect();
+            list.sort();
+            user_suggestions.set(list);
+        }
+
+        let mut backends_list = vec![
+            "vllm".to_string(),
+            "sglang".to_string(),
+            "tgi".to_string(),
+            "llama_cpp".to_string(),
+        ];
+        if let Ok(backends) = fetch_admin_backends().await {
+            for b in backends {
+                if !backends_list.contains(&b.id) {
+                    backends_list.push(b.id);
+                }
+            }
+        }
+        backends_list.sort();
+        backend_suggestions.set(backends_list);
+
+        if let Ok(apis) = fetch_admin_openai_apis().await {
+            let mut list: Vec<String> = apis.into_iter().map(|a| a.id).collect();
+            list.sort();
+            openai_api_suggestions.set(list);
+        }
     });
 
     let open_create_modal = move |_| {
@@ -64,13 +98,13 @@ pub fn AdminModelsView(toasts: Signal<Vec<Toast>>) -> Element {
         form_name.set(String::new());
         form_timeout.set(String::new());
         form_hidden.set(false);
-        form_users.set(String::new());
+        form_users.set(Vec::new());
         form_handler_type.set("spawner".to_string());
-        form_backends.set(String::new());
+        form_backends.set(Vec::new());
         form_min_scale.set(0);
         form_max_scale.set(1);
         form_queue_threshold.set(1);
-        form_openai_api.set(String::new());
+        form_openai_api.set(Vec::new());
         form_openai_url.set(String::new());
         form_openai_token.set(String::new());
         form_openai_model.set(String::new());
@@ -107,22 +141,16 @@ pub fn AdminModelsView(toasts: Signal<Vec<Toast>>) -> Element {
 
         let timeout = form_timeout.read().trim().parse::<u32>().ok();
 
-        let limit_to_users = if form_users.read().trim().is_empty() {
+        let limit_to_users = if form_users.read().is_empty() {
             None
         } else {
-            Some(
-                form_users
-                    .read()
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect::<HashSet<_>>(),
-            )
+            Some(form_users.read().iter().cloned().collect::<HashSet<_>>())
         };
 
         let handler = if form_handler_type.read().as_str() == "openai" {
+            let api_val = form_openai_api.read().first().cloned().filter(|s| !s.trim().is_empty());
             ModelHandlerConfig::OpenAi(OpenAiHandlerConf {
-                api: if form_openai_api.read().trim().is_empty() { None } else { Some(form_openai_api.read().trim().to_string()) },
+                api: api_val,
                 url: if form_openai_url.read().trim().is_empty() { None } else { Some(form_openai_url.read().trim().to_string()) },
                 token: if form_openai_token.read().trim().is_empty() { None } else { Some(form_openai_token.read().trim().to_string()) },
                 model: if form_openai_model.read().trim().is_empty() { None } else { Some(form_openai_model.read().trim().to_string()) },
@@ -130,17 +158,10 @@ pub fn AdminModelsView(toasts: Signal<Vec<Toast>>) -> Element {
                 headers: None,
             })
         } else {
-            let backends = if form_backends.read().trim().is_empty() {
+            let backends = if form_backends.read().is_empty() {
                 None
             } else {
-                Some(
-                    form_backends
-                        .read()
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect::<HashSet<_>>(),
-                )
+                Some(form_backends.read().iter().cloned().collect::<HashSet<_>>())
             };
             ModelHandlerConfig::Spawner(SpawnerConfig {
                 backends,
@@ -298,29 +319,29 @@ pub fn AdminModelsView(toasts: Signal<Vec<Toast>>) -> Element {
                                                         form_name.set(m.name.clone().unwrap_or_default());
                                                         form_timeout.set(m.timeout.map(|t| t.to_string()).unwrap_or_default());
                                                         form_hidden.set(m.hidden.unwrap_or(false));
-                                                        form_users.set(
-                                                            m.limit_to_users
-                                                                .as_ref()
-                                                                .map(|u| u.iter().cloned().collect::<Vec<_>>().join(", "))
-                                                                .unwrap_or_default(),
-                                                        );
+                                                        let mut u_list: Vec<String> = m.limit_to_users
+                                                            .as_ref()
+                                                            .map(|u| u.iter().cloned().collect())
+                                                            .unwrap_or_default();
+                                                        u_list.sort();
+                                                        form_users.set(u_list);
 
                                                         match &m.handler {
                                                             ModelHandlerConfig::Spawner(sp) => {
                                                                 form_handler_type.set("spawner".to_string());
-                                                                form_backends.set(
-                                                                    sp.backends
-                                                                        .as_ref()
-                                                                        .map(|b| b.iter().cloned().collect::<Vec<_>>().join(", "))
-                                                                        .unwrap_or_default(),
-                                                                );
+                                                                let mut b_list: Vec<String> = sp.backends
+                                                                    .as_ref()
+                                                                    .map(|b| b.iter().cloned().collect())
+                                                                    .unwrap_or_default();
+                                                                b_list.sort();
+                                                                form_backends.set(b_list);
                                                                 form_min_scale.set(sp.min_scale);
                                                                 form_max_scale.set(sp.max_scale);
                                                                 form_queue_threshold.set(sp.queue_length_for_scale_up);
                                                             }
                                                             ModelHandlerConfig::OpenAi(oa) => {
                                                                 form_handler_type.set("openai".to_string());
-                                                                form_openai_api.set(oa.api.clone().unwrap_or_default());
+                                                                form_openai_api.set(oa.api.as_ref().map(|a| vec![a.clone()]).unwrap_or_default());
                                                                 form_openai_url.set(oa.url.clone().unwrap_or_default());
                                                                 form_openai_token.set(oa.token.clone().unwrap_or_default());
                                                                 form_openai_model.set(oa.model.clone().unwrap_or_default());
@@ -398,12 +419,11 @@ pub fn AdminModelsView(toasts: Signal<Vec<Toast>>) -> Element {
                                 
                                 div {
                                     class: "form-group",
-                                    label { class: "form-label", "Allowed Backends (comma-separated, optional)" }
-                                    input {
-                                        class: "glass-input",
-                                        placeholder: "e.g. vllm, sglang, tgi",
-                                        value: "{form_backends.read()}",
-                                        oninput: move |evt| form_backends.set(evt.value()),
+                                    label { class: "form-label", "Allowed Backends (optional, empty for all)" }
+                                    ChipInput {
+                                        values: form_backends,
+                                        suggestions: backend_suggestions.read().clone(),
+                                        placeholder: "e.g. vllm, sglang, tgi...",
                                     }
                                 }
 
@@ -458,11 +478,11 @@ pub fn AdminModelsView(toasts: Signal<Vec<Toast>>) -> Element {
                                 div {
                                     class: "form-group",
                                     label { class: "form-label", "Upstream API Reference ID (Optional)" }
-                                    input {
-                                        class: "glass-input",
-                                        placeholder: "e.g. openrouter, groq",
-                                        value: "{form_openai_api.read()}",
-                                        oninput: move |evt| form_openai_api.set(evt.value()),
+                                    ChipInput {
+                                        values: form_openai_api,
+                                        suggestions: openai_api_suggestions.read().clone(),
+                                        max_items: Some(1),
+                                        placeholder: "Select upstream provider...",
                                     }
                                 }
 
@@ -503,12 +523,11 @@ pub fn AdminModelsView(toasts: Signal<Vec<Toast>>) -> Element {
 
                         div {
                             class: "form-group",
-                            label { class: "form-label", "Limit to Users (comma-separated, empty for all)" }
-                            input {
-                                class: "glass-input",
-                                placeholder: "alice, bob",
-                                value: "{form_users.read()}",
-                                oninput: move |evt| form_users.set(evt.value()),
+                            label { class: "form-label", "Limit to Users (empty for all users)" }
+                            ChipInput {
+                                values: form_users,
+                                suggestions: user_suggestions.read().clone(),
+                                placeholder: "Add user restriction...",
                             }
                         }
 

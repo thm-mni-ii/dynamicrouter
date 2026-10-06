@@ -1,8 +1,8 @@
 use crate::api::{
-    delete_admin_factory_gpu, fetch_admin_factory_gpus, save_admin_factory_gpu,
+    delete_admin_factory_gpu, fetch_admin_factory_gpus, fetch_v1_models, save_admin_factory_gpu,
 };
 use crate::components::icons::*;
-use crate::components::{GlassBadge, GlassCard, GlassModal};
+use crate::components::{ChipInput, GlassBadge, GlassCard, GlassModal};
 use crate::models::FactoryGpuRecord;
 use crate::state::Toast;
 use dioxus::prelude::*;
@@ -31,6 +31,7 @@ fn load_gpus_action(
 #[component]
 pub fn AdminFactoryGpusView(toasts: Signal<Vec<Toast>>) -> Element {
     let gpus = use_signal(Vec::<FactoryGpuRecord>::new);
+    let mut model_suggestions = use_signal(Vec::<String>::new);
     let is_loading = use_signal(|| false);
     let mut show_create_modal = use_signal(|| false);
 
@@ -40,10 +41,16 @@ pub fn AdminFactoryGpusView(toasts: Signal<Vec<Toast>>) -> Element {
     let mut form_memory = use_signal(|| 24i64);
     let mut form_price = use_signal(|| 0.45f64);
     let mut form_max_count = use_signal(|| 8i64);
-    let mut form_model = use_signal(String::new);
+    let mut form_model = use_signal(Vec::<String>::new);
 
     let _ = use_resource(move || async move {
         load_gpus_action(is_loading, gpus, toasts);
+
+        if let Ok(models) = fetch_v1_models().await {
+            let mut list: Vec<String> = models.into_iter().map(|m| m.id).collect();
+            list.sort();
+            model_suggestions.set(list);
+        }
     });
 
     let save_gpu = move |_| {
@@ -53,13 +60,15 @@ pub fn AdminFactoryGpusView(toasts: Signal<Vec<Toast>>) -> Element {
             return;
         }
 
+        let model_val = form_model.read().first().cloned().unwrap_or_default().trim().to_string();
+
         let payload = FactoryGpuRecord {
             factory_type,
             id,
             memory: *form_memory.read(),
             price: *form_price.read(),
             max_count: *form_max_count.read(),
-            model: form_model.read().trim().to_string(),
+            model: model_val,
         };
 
         spawn(async move {
@@ -123,7 +132,15 @@ pub fn AdminFactoryGpusView(toasts: Signal<Vec<Toast>>) -> Element {
                     }
                     button {
                         class: "glass-btn btn-primary",
-                        onclick: move |_| show_create_modal.set(true),
+                        onclick: move |_| {
+                            form_factory.set("runpod".to_string());
+                            form_id.set(String::new());
+                            form_memory.set(24);
+                            form_price.set(0.45);
+                            form_max_count.set(8);
+                            form_model.set(Vec::new());
+                            show_create_modal.set(true);
+                        },
                         IconPlus { size: 16 }
                         span { "Add GPU Spec" }
                     }
@@ -264,11 +281,11 @@ pub fn AdminFactoryGpusView(toasts: Signal<Vec<Toast>>) -> Element {
                         div {
                             class: "form-group",
                             label { class: "form-label", "Target Model Restriction (Optional, empty for general use)" }
-                            input {
-                                class: "glass-input font-mono",
-                                placeholder: "meta-llama/Llama-3-70B-Instruct",
-                                value: "{form_model.read()}",
-                                oninput: move |evt| form_model.set(evt.value()),
+                            ChipInput {
+                                values: form_model,
+                                suggestions: model_suggestions.read().clone(),
+                                max_items: Some(1),
+                                placeholder: "Select model restriction...",
                             }
                         }
 

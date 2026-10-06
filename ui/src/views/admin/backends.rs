@@ -1,9 +1,9 @@
 use crate::api::{
     delete_admin_backend, delete_admin_backend_model, fetch_admin_backend_models,
-    fetch_admin_backends, save_admin_backend, save_admin_backend_model,
+    fetch_admin_backends, fetch_v1_models, save_admin_backend, save_admin_backend_model,
 };
 use crate::components::icons::*;
-use crate::components::{GlassBadge, GlassCard, GlassModal};
+use crate::components::{ChipInput, GlassBadge, GlassCard, GlassModal};
 use crate::models::{BackendModelRecord, BackendRecord, BackendUseFor};
 use crate::state::Toast;
 use dioxus::prelude::*;
@@ -33,6 +33,7 @@ fn load_backends_action(
 #[component]
 pub fn AdminBackendsView(toasts: Signal<Vec<Toast>>) -> Element {
     let backends = use_signal(Vec::<BackendRecord>::new);
+    let mut model_suggestions = use_signal(Vec::<String>::new);
     let is_loading = use_signal(|| false);
     let mut editing_backend = use_signal(|| Option::<(BackendRecord, bool)>::None);
     let mut selected_backend_for_models = use_signal(|| Option::<String>::None);
@@ -42,23 +43,52 @@ pub fn AdminBackendsView(toasts: Signal<Vec<Toast>>) -> Element {
     let mut form_id = use_signal(String::new);
     let mut form_type = use_signal(|| "vllm".to_string());
     let mut form_image = use_signal(String::new);
-    let mut form_quants = use_signal(String::new);
+    let mut form_quants = use_signal(Vec::<String>::new);
 
     // Form inputs for Model Config
     let mut editing_model_cfg = use_signal(|| Option::<BackendModelRecord>::None);
-    let mut form_model_name = use_signal(String::new);
-    let mut form_model_args = use_signal(String::new);
+    let mut form_model_name = use_signal(Vec::<String>::new);
+    let mut form_model_args = use_signal(Vec::<String>::new);
     let mut form_model_ctx = use_signal(String::new);
+
+    let quant_suggestions = vec![
+        "AWQ".to_string(),
+        "GPTQ".to_string(),
+        "BitsAndBytes".to_string(),
+        "GGUF".to_string(),
+        "fp8".to_string(),
+        "int8".to_string(),
+        "int4".to_string(),
+        "bf16".to_string(),
+        "fp16".to_string(),
+        "none".to_string(),
+    ];
+
+    let cli_arg_suggestions = vec![
+        "--gpu-memory-utilization 0.95".to_string(),
+        "--max-model-len 8192".to_string(),
+        "--trust-remote-code".to_string(),
+        "--enforce-eager".to_string(),
+        "--dtype bfloat16".to_string(),
+        "--tensor-parallel-size 1".to_string(),
+        "--disable-log-stats".to_string(),
+    ];
 
     let _ = use_resource(move || async move {
         load_backends_action(is_loading, backends, toasts);
+
+        if let Ok(models) = fetch_v1_models().await {
+            let mut list: Vec<String> = models.into_iter().map(|m| m.id).collect();
+            list.sort();
+            model_suggestions.set(list);
+        }
     });
 
     let open_create_backend = move |_| {
         form_id.set(String::new());
         form_type.set("vllm".to_string());
         form_image.set("vllm/vllm-openai:latest".to_string());
-        form_quants.set(String::new());
+        form_quants.set(Vec::new());
 
         editing_backend.set(Some((
             BackendRecord {
@@ -84,17 +114,10 @@ pub fn AdminBackendsView(toasts: Signal<Vec<Toast>>) -> Element {
             return;
         }
 
-        let quants = if form_quants.read().trim().is_empty() {
+        let quants = if form_quants.read().is_empty() {
             None
         } else {
-            Some(
-                form_quants
-                    .read()
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect::<HashSet<_>>(),
-            )
+            Some(form_quants.read().iter().cloned().collect::<HashSet<_>>())
         };
 
         let payload = BackendRecord {
@@ -150,18 +173,12 @@ pub fn AdminBackendsView(toasts: Signal<Vec<Toast>>) -> Element {
 
     let save_model_cfg = move |_| {
         let b_id = selected_backend_for_models.read().clone().unwrap_or_default();
-        let model = form_model_name.read().trim().to_string();
+        let model = form_model_name.read().first().cloned().unwrap_or_default().trim().to_string();
         if model.is_empty() || b_id.is_empty() {
             return;
         }
 
-        let args = form_model_args
-            .read()
-            .split(' ')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>();
-
+        let args = form_model_args.read().clone();
         let ctx = form_model_ctx.read().trim().parse::<u64>().ok();
 
         let payload = BackendModelRecord {
@@ -294,13 +311,13 @@ pub fn AdminBackendsView(toasts: Signal<Vec<Toast>>) -> Element {
                                                         form_id.set(b.id.clone());
                                                         form_type.set(b.backend_type.clone());
                                                         form_image.set(b.image.clone());
-                                                        form_quants.set(
-                                                            b.use_for
-                                                                .0
-                                                                .as_ref()
-                                                                .map(|q| q.iter().cloned().collect::<Vec<_>>().join(", "))
-                                                                .unwrap_or_default(),
-                                                        );
+                                                        let mut q_list: Vec<String> = b.use_for
+                                                            .0
+                                                            .as_ref()
+                                                            .map(|q| q.iter().cloned().collect())
+                                                            .unwrap_or_default();
+                                                        q_list.sort();
+                                                        form_quants.set(q_list);
 
                                                         editing_backend.set(Some((b.clone(), false)));
                                                     }
@@ -344,8 +361,8 @@ pub fn AdminBackendsView(toasts: Signal<Vec<Toast>>) -> Element {
                                 onclick: {
                                     let b_id_clone = b_id.clone();
                                     move |_| {
-                                        form_model_name.set(String::new());
-                                        form_model_args.set(String::new());
+                                        form_model_name.set(Vec::new());
+                                        form_model_args.set(Vec::new());
                                         form_model_ctx.set(String::new());
                                         editing_model_cfg.set(Some(BackendModelRecord {
                                             backend_id: b_id_clone.clone(),
@@ -461,12 +478,11 @@ pub fn AdminBackendsView(toasts: Signal<Vec<Toast>>) -> Element {
 
                         div {
                             class: "form-group",
-                            label { class: "form-label", "Quantization Types to Use For (comma-separated, optional)" }
-                            input {
-                                class: "glass-input",
-                                placeholder: "AWQ, GPTQ, BitsAndBytes",
-                                value: "{form_quants.read()}",
-                                oninput: move |evt| form_quants.set(evt.value()),
+                            label { class: "form-label", "Quantization Types to Use For (optional)" }
+                            ChipInput {
+                                values: form_quants,
+                                suggestions: quant_suggestions.clone(),
+                                placeholder: "Add quantization type (AWQ, GPTQ, GGUF, fp8)...",
                             }
                         }
 
@@ -498,23 +514,23 @@ pub fn AdminBackendsView(toasts: Signal<Vec<Toast>>) -> Element {
                         div {
                             class: "form-group",
                             label { class: "form-label", "Model ID" }
-                            input {
-                                class: "glass-input font-mono",
-                                placeholder: "meta-llama/Llama-3-8B-Instruct",
-                                value: "{form_model_name.read()}",
-                                oninput: move |evt| form_model_name.set(evt.value()),
+                            ChipInput {
+                                values: form_model_name,
+                                suggestions: model_suggestions.read().clone(),
+                                max_items: Some(1),
+                                placeholder: "Select or enter model ID...",
                             }
                         }
 
                         div {
                             class: "form-group",
-                            label { class: "form-label", "Command Line Arguments (space-separated)" }
-                            input {
-                                class: "glass-input font-mono",
-                                placeholder: "--gpu-memory-utilization 0.95 --max-model-len 8192",
-                                value: "{form_model_args.read()}",
-                                oninput: move |evt| form_model_args.set(evt.value()),
+                            label { class: "form-label", "Command Line Arguments" }
+                            ChipInput {
+                                values: form_model_args,
+                                suggestions: cli_arg_suggestions.clone(),
+                                placeholder: "e.g. --gpu-memory-utilization 0.95...",
                             }
+                            span { class: "form-hint", "Add individual arguments as chips. Comma or Enter to add." }
                         }
 
                         div {
