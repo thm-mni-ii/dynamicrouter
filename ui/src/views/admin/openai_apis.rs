@@ -212,6 +212,7 @@ pub fn AdminOpenAiApisView(toasts: Signal<Vec<Toast>>) -> Element {
                                 th { "Endpoint URL" }
                                 th { "Prefix" }
                                 th { "Models" }
+                                th { "Timeout" }
                                 th { class: "text-right", "Actions" }
                             }
                         }
@@ -219,7 +220,7 @@ pub fn AdminOpenAiApisView(toasts: Signal<Vec<Toast>>) -> Element {
                             if apis.read().is_empty() {
                                 tr {
                                     td {
-                                        colspan: 5,
+                                        colspan: 6,
                                         class: "text-muted",
                                         style: "text-align: center; padding: 2rem;",
                                         if *is_loading.read() { "Loading upstreams..." } else { "No upstream providers configured." }
@@ -243,6 +244,15 @@ pub fn AdminOpenAiApisView(toasts: Signal<Vec<Toast>>) -> Element {
                                             GlassBadge { variant: "glow", "{m.len()} models" }
                                         } else {
                                             GlassBadge { "Dynamic / All" }
+                                        }
+                                    }
+                                    td {
+                                        span {
+                                            class: "text-sm font-mono text-muted",
+                                            match api.timeout {
+                                                Some(t) => format!("{t}s"),
+                                                None => "Default".to_string(),
+                                            }
                                         }
                                     }
                                     td {
@@ -337,6 +347,19 @@ pub fn AdminOpenAiApisView(toasts: Signal<Vec<Toast>>) -> Element {
                                 value: "{form_prefix.read()}",
                                 oninput: move |evt| form_prefix.set(evt.value()),
                             }
+                        }
+
+                        div {
+                            class: "form-group",
+                            label { class: "form-label", "Request Timeout in seconds (Optional)" }
+                            input {
+                                r#type: "number",
+                                class: "glass-input",
+                                placeholder: "e.g. 600 (defaults to system setting)",
+                                value: "{form_timeout.read()}",
+                                oninput: move |evt| form_timeout.set(evt.value()),
+                            }
+                            span { class: "form-hint", "HTTP client request timeout in seconds for this upstream provider." }
                         }
 
                         div {

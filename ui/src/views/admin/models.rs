@@ -260,6 +260,7 @@ pub fn AdminModelsView(toasts: Signal<Vec<Toast>>) -> Element {
                                 th { "Display Name" }
                                 th { "Handler" }
                                 th { "Scale (Min/Max)" }
+                                th { "Timeout" }
                                 th { "Visibility" }
                                 th { class: "text-right", "Actions" }
                             }
@@ -268,7 +269,7 @@ pub fn AdminModelsView(toasts: Signal<Vec<Toast>>) -> Element {
                             if models.read().is_empty() {
                                 tr {
                                     td {
-                                        colspan: 6,
+                                        colspan: 7,
                                         class: "text-muted",
                                         style: "text-align: center; padding: 2rem;",
                                         if *is_loading.read() { "Loading models..." } else { "No configured models found." }
@@ -296,6 +297,15 @@ pub fn AdminModelsView(toasts: Signal<Vec<Toast>>) -> Element {
                                             match &model.handler {
                                                 ModelHandlerConfig::Spawner(sp) => format!("{}/{}", sp.min_scale, sp.max_scale),
                                                 ModelHandlerConfig::OpenAi(_) => "—".to_string(),
+                                            }
+                                        }
+                                    }
+                                    td {
+                                        span {
+                                            class: "text-sm font-mono text-muted",
+                                            match model.timeout {
+                                                Some(t) => format!("{t}s"),
+                                                None => "Default".to_string(),
                                             }
                                         }
                                     }
@@ -519,6 +529,19 @@ pub fn AdminModelsView(toasts: Signal<Vec<Toast>>) -> Element {
                                     }
                                 }
                             }
+                        }
+
+                        div {
+                            class: "form-group",
+                            label { class: "form-label", "Model Timeout in seconds (Optional)" }
+                            input {
+                                r#type: "number",
+                                class: "glass-input",
+                                placeholder: "e.g. 600 (defaults to system setting)",
+                                value: "{form_timeout.read()}",
+                                oninput: move |evt| form_timeout.set(evt.value()),
+                            }
+                            span { class: "form-hint", "Override idle/request timeout for this model in seconds." }
                         }
 
                         div {
