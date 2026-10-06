@@ -104,6 +104,13 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                 .ok()
                 .flatten();
 
+            if db_user.as_ref().is_some_and(User::is_expired) {
+                return Err(AuthError::Forbidden(format!(
+                    "User account '{}' has expired",
+                    session.username
+                )));
+            }
+
             let is_admin = session.is_admin
                 || db_user.as_ref().is_some_and(|u| u.is_admin)
                 || CONFIG.is_user_admin_by_config(&session.username)
@@ -124,6 +131,12 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
         // 2. Check in database user_tokens (hash of bearer token)
         let token_hash = hash_token(&raw_token);
         if let Ok(Some(user)) = get_user_by_token_hash(&token_hash).await {
+            if user.is_expired() {
+                return Err(AuthError::Forbidden(format!(
+                    "User account '{}' has expired",
+                    user.username
+                )));
+            }
             let is_admin = user.is_admin || CONFIG.is_user_admin_by_config(&user.username);
             return Ok(AuthUser {
                 username: user.username.clone(),
@@ -136,6 +149,12 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
 
         // 3. Also check if the raw token was itself stored as the token hash directly
         if let Ok(Some(user)) = get_user_by_token_hash(&raw_token).await {
+            if user.is_expired() {
+                return Err(AuthError::Forbidden(format!(
+                    "User account '{}' has expired",
+                    user.username
+                )));
+            }
             let is_admin = user.is_admin || CONFIG.is_user_admin_by_config(&user.username);
             return Ok(AuthUser {
                 username: user.username.clone(),
@@ -156,6 +175,12 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                 .unwrap_or_else(|| "oidc_user".to_string());
 
             let db_user = get_user_by_username(&username).await.ok().flatten();
+
+            if db_user.as_ref().is_some_and(User::is_expired) {
+                return Err(AuthError::Forbidden(format!(
+                    "User account '{username}' has expired"
+                )));
+            }
 
             let has_admin_role = claims.roles.as_ref().is_some_and(|roles| {
                 roles

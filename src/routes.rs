@@ -87,7 +87,14 @@ pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusC
     })))
 }
 
-pub async fn check_token(token: &str) -> Option<User> {
+#[derive(Debug, Clone)]
+pub enum TokenAuthResult {
+    Valid(User),
+    Expired(String),
+    Invalid,
+}
+
+pub async fn check_token_auth(token: &str) -> TokenAuthResult {
     if let Some(session) = crate::auth::session::SESSIONS.get_session(token).await {
         let is_admin = session.is_admin
             || crate::config::CONFIG.is_user_admin_by_config(&session.username)
@@ -97,14 +104,18 @@ pub async fn check_token(token: &str) -> Option<User> {
                 .is_some_and(|e| crate::config::CONFIG.is_user_admin_by_config(e));
 
         if let Ok(Some(mut user)) = crate::db::user::get_user_by_username(&session.username).await {
+            if user.is_expired() {
+                return TokenAuthResult::Expired(user.username);
+            }
             user.is_admin = user.is_admin || is_admin;
-            return Some(user);
+            return TokenAuthResult::Valid(user);
         }
-        return Some(User {
+        return TokenAuthResult::Valid(User {
             username: session.username,
             limit_to_models: None,
             log_request_body: None,
             is_admin,
+            expires_at: None,
         });
     }
 
@@ -113,16 +124,29 @@ pub async fn check_token(token: &str) -> Option<User> {
     let hash = hex::encode(hasher.finalize());
 
     if let Ok(Some(mut user)) = get_user_by_token_hash(&hash).await {
+        if user.is_expired() {
+            return TokenAuthResult::Expired(user.username);
+        }
         user.is_admin = user.is_admin || crate::config::CONFIG.is_user_admin_by_config(&user.username);
-        return Some(user);
+        return TokenAuthResult::Valid(user);
     }
 
     if let Ok(Some(mut user)) = get_user_by_token_hash(token).await {
+        if user.is_expired() {
+            return TokenAuthResult::Expired(user.username);
+        }
         user.is_admin = user.is_admin || crate::config::CONFIG.is_user_admin_by_config(&user.username);
-        return Some(user);
+        return TokenAuthResult::Valid(user);
     }
 
-    None
+    TokenAuthResult::Invalid
+}
+
+pub async fn check_token(token: &str) -> Option<User> {
+    match check_token_auth(token).await {
+        TokenAuthResult::Valid(u) => Some(u),
+        _ => None,
+    }
 }
 
 pub struct Authorization {
@@ -130,8 +154,44 @@ pub struct Authorization {
     pub user: User,
 }
 
+#[derive(Debug, Clone)]
+pub enum AuthRejection {
+    Unauthorized(String),
+    Forbidden(String),
+}
+
+impl IntoResponse for AuthRejection {
+    fn into_response(self) -> Response {
+        let (status, msg, code, err_type) = match self {
+            AuthRejection::Unauthorized(m) => (
+                StatusCode::UNAUTHORIZED,
+                m,
+                "invalid_api_key",
+                "invalid_request_error",
+            ),
+            AuthRejection::Forbidden(m) => (
+                StatusCode::FORBIDDEN,
+                m,
+                "user_expired",
+                "access_denied",
+            ),
+        };
+
+        let body = json!({
+            "error": {
+                "message": msg,
+                "type": err_type,
+                "code": code,
+            },
+            "message": msg
+        });
+
+        (status, [(header::CONTENT_TYPE, "application/json")], Json(body)).into_response()
+    }
+}
+
 impl<S: Send + Sync> FromRequestParts<S> for Authorization {
-    type Rejection = StatusCode;
+    type Rejection = AuthRejection;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let token = parts
@@ -139,12 +199,22 @@ impl<S: Send + Sync> FromRequestParts<S> for Authorization {
             .get(header::AUTHORIZATION)
             .and_then(|h| h.to_str().ok())
             .and_then(|h| h.strip_prefix("Bearer "))
-            .ok_or(StatusCode::UNAUTHORIZED)?;
+            .ok_or_else(|| AuthRejection::Unauthorized("Missing or invalid authorization header".to_string()))?;
 
-        let user = check_token(token).await.ok_or(StatusCode::UNAUTHORIZED)?;
-        let username = user.username.clone();
-
-        Ok(Authorization { username, user })
+        match check_token_auth(token).await {
+            TokenAuthResult::Valid(user) => {
+                let username = user.username.clone();
+                Ok(Authorization { username, user })
+            }
+            TokenAuthResult::Expired(username) => {
+                Err(AuthRejection::Forbidden(format!(
+                    "User account '{username}' has expired"
+                )))
+            }
+            TokenAuthResult::Invalid => {
+                Err(AuthRejection::Unauthorized("Invalid authorization token".to_string()))
+            }
+        }
     }
 }
 

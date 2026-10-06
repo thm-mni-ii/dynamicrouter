@@ -43,6 +43,7 @@ pub struct EnvConfig {
     pub oidc_admin_users: HashSet<String>,
     pub oidc_admin_roles: HashSet<String>,
     pub oidc_enabled: bool,
+    pub oidc_auto_register: bool,
 }
 
 fn load_env_all() {
@@ -112,7 +113,7 @@ fn parse_list_from_env(var_names: &[&str]) -> HashSet<String> {
                 .trim_matches('{')
                 .trim_matches('}');
 
-            for part in cleaned_raw.split(|c| c == ',' || c == ';' || c == '\n') {
+            for part in cleaned_raw.split([',', ';', '\n']) {
                 for token in part.split_whitespace() {
                     let cleaned = token
                         .trim()
@@ -149,7 +150,7 @@ fn parse_list_from_env(var_names: &[&str]) -> HashSet<String> {
                                     .trim_matches('\'')
                                     .trim_matches('[')
                                     .trim_matches(']');
-                                for part in val_clean.split(|c| c == ',' || c == ';' || c == '\n') {
+                                for part in val_clean.split([',', ';', '\n']) {
                                     for token in part.split_whitespace() {
                                         let cleaned = token
                                             .trim()
@@ -325,6 +326,12 @@ impl EnvConfig {
             |v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"),
         );
 
+        let oidc_auto_register = env::var("OIDC_AUTO_REGISTER")
+            .or_else(|_| env::var("OIDC_USER_AUTO_REGISTRATION"))
+            .or_else(|_| env::var("OIDC_AUTO_REGISTRATION"))
+            .or_else(|_| env::var("AUTO_REGISTER_USERS"))
+            .is_ok_and(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"));
+
         EnvConfig {
             port,
             host,
@@ -352,6 +359,7 @@ impl EnvConfig {
             oidc_admin_users,
             oidc_admin_roles,
             oidc_enabled,
+            oidc_auto_register,
         }
     }
 

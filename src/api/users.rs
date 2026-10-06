@@ -17,6 +17,7 @@ pub struct CreateUserPayload {
     pub limit_to_models: Option<HashSet<String>>,
     pub log_request_body: Option<bool>,
     pub is_admin: Option<bool>,
+    pub expires_at: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -24,6 +25,7 @@ pub struct UpdateUserPayload {
     pub limit_to_models: Option<HashSet<String>>,
     pub log_request_body: Option<bool>,
     pub is_admin: Option<bool>,
+    pub expires_at: Option<i64>,
 }
 
 pub fn users_routes() -> Router {
@@ -78,6 +80,7 @@ async fn create_new_user(
         payload.limit_to_models.as_ref(),
         payload.log_request_body,
         payload.is_admin.unwrap_or(false),
+        payload.expires_at,
     )
     .await
     .map_err(|e| {
@@ -124,6 +127,7 @@ async fn update_existing_user(
         payload.limit_to_models.as_ref(),
         payload.log_request_body,
         is_admin,
+        payload.expires_at,
     )
     .await
     .map_err(|e| {

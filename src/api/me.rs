@@ -26,6 +26,8 @@ async fn get_me(user: AuthUser) -> Json<serde_json::Value> {
         "is_admin": user.is_admin,
         "limit_to_models": user.user.as_ref().and_then(|u| u.limit_to_models.clone()),
         "log_request_body": user.user.as_ref().and_then(|u| u.log_request_body),
+        "expires_at": user.user.as_ref().and_then(|u| u.expires_at),
+        "is_expired": user.user.as_ref().is_some_and(crate::db::user::User::is_expired),
     }))
 }
 

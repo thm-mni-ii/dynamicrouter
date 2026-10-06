@@ -4,12 +4,24 @@ use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::collections::HashSet;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct User {
     pub username: String,
     pub limit_to_models: Option<HashSet<String>>,
     pub log_request_body: Option<bool>,
     pub is_admin: bool,
+    pub expires_at: Option<i64>,
+}
+
+impl User {
+    #[must_use]
+    pub fn is_expired(&self) -> bool {
+        if let Some(exp) = self.expires_at {
+            chrono::Utc::now().timestamp() > exp
+        } else {
+            false
+        }
+    }
 }
 
 #[derive(sqlx::FromRow)]
@@ -18,6 +30,7 @@ struct UserRow {
     limit_to_models: Option<String>,
     log_request_body: Option<bool>,
     is_admin: Option<bool>,
+    expires_at: Option<i64>,
 }
 
 impl UserRow {
@@ -30,6 +43,7 @@ impl UserRow {
             limit_to_models,
             log_request_body: self.log_request_body,
             is_admin: self.is_admin.unwrap_or(false),
+            expires_at: self.expires_at,
         }
     }
 }
@@ -37,7 +51,7 @@ impl UserRow {
 pub async fn get_user_by_token_hash(token_hash: &str) -> Result<Option<User>, anyhow::Error> {
     let row = sqlx::query_as::<_, UserRow>(
         r"
-        SELECT u.username, u.limit_to_models, u.log_request_body, u.is_admin
+        SELECT u.username, u.limit_to_models, u.log_request_body, u.is_admin, u.expires_at
         FROM user_tokens ut
         JOIN users u ON ut.username = u.username
         WHERE ut.token_hash = ?
@@ -53,7 +67,7 @@ pub async fn get_user_by_token_hash(token_hash: &str) -> Result<Option<User>, an
 pub async fn get_user_by_username(username: &str) -> Result<Option<User>, anyhow::Error> {
     let row = sqlx::query_as::<_, UserRow>(
         r"
-        SELECT username, limit_to_models, log_request_body, is_admin
+        SELECT username, limit_to_models, log_request_body, is_admin, expires_at
         FROM users
         WHERE username = ?
         ",
@@ -68,7 +82,7 @@ pub async fn get_user_by_username(username: &str) -> Result<Option<User>, anyhow
 pub async fn get_all_users() -> Result<Vec<User>, anyhow::Error> {
     let rows = sqlx::query_as::<_, UserRow>(
         r"
-        SELECT username, limit_to_models, log_request_body, is_admin
+        SELECT username, limit_to_models, log_request_body, is_admin, expires_at
         FROM users
         ORDER BY username
         ",
@@ -84,22 +98,25 @@ pub async fn create_user(
     limit_to_models: Option<&HashSet<String>>,
     log_request_body: Option<bool>,
     is_admin: bool,
+    expires_at: Option<i64>,
 ) -> Result<(), anyhow::Error> {
     let limit_str = limit_to_models.map(|l| serde_json::to_string(l).unwrap_or_default());
     sqlx::query(
         r"
-        INSERT INTO users (username, limit_to_models, log_request_body, is_admin)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO users (username, limit_to_models, log_request_body, is_admin, expires_at)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(username) DO UPDATE SET
             limit_to_models = excluded.limit_to_models,
             log_request_body = excluded.log_request_body,
-            is_admin = excluded.is_admin
+            is_admin = excluded.is_admin,
+            expires_at = excluded.expires_at
         ",
     )
     .bind(username)
     .bind(limit_str)
     .bind(log_request_body)
     .bind(is_admin)
+    .bind(expires_at)
     .execute(get_executor())
     .await?;
     Ok(())

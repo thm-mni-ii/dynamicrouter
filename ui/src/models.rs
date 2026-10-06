@@ -11,6 +11,7 @@ pub struct UserProfile {
     pub is_admin: bool,
     pub limit_to_models: Option<HashSet<String>>,
     pub log_request_body: Option<bool>,
+    pub expires_at: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -40,6 +41,7 @@ pub struct AdminUserRecord {
     pub limit_to_models: Option<HashSet<String>>,
     pub log_request_body: Option<bool>,
     pub is_admin: bool,
+    pub expires_at: Option<i64>,
 }
 
 // --------------------------------------------------------------------------

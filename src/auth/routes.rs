@@ -12,7 +12,7 @@ use axum::http::{StatusCode, Uri};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use log::{error, info};
+use log::{error, info, warn};
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 use serde_json::json;
@@ -51,6 +51,7 @@ pub fn auth_routes() -> Router {
 async fn auth_config() -> Json<serde_json::Value> {
     Json(json!({
         "oidc_enabled": CONFIG.oidc_enabled,
+        "oidc_auto_register": CONFIG.oidc_auto_register,
         "issuer": CONFIG.oidc_issuer_url,
         "client_id": CONFIG.oidc_client_id,
         "scopes": CONFIG.oidc_scopes,
@@ -631,18 +632,60 @@ async fn handle_callback(
     });
 
     let existing_db_user = get_user_by_username(&username).await.ok().flatten();
+
+    // 1. Check auto-registration if user does not exist in DB
+    if existing_db_user.is_none() && !CONFIG.oidc_auto_register {
+        warn!("User '{username}' attempted OIDC login but is not registered and auto-registration is disabled");
+        if is_browser_get {
+            let html = render_callback_error_html(&format!(
+                "User registration is disabled and account '{username}' does not exist. Please contact an administrator."
+            ));
+            return Ok((
+                StatusCode::FORBIDDEN,
+                [(CONTENT_TYPE, "text/html; charset=utf-8")],
+                Html(html),
+            ).into_response());
+        }
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": format!("User '{username}' is not registered and auto-registration is disabled") })),
+        ));
+    }
+
+    // 2. Check user expiration if user exists in DB
+    if let Some(ref db_user) = existing_db_user
+        && db_user.is_expired()
+    {
+        warn!("User '{username}' attempted OIDC login but account has expired");
+        if is_browser_get {
+            let html = render_callback_error_html(&format!(
+                "User account '{username}' has expired. Please contact an administrator."
+            ));
+            return Ok((
+                StatusCode::FORBIDDEN,
+                [(CONTENT_TYPE, "text/html; charset=utf-8")],
+                Html(html),
+            ).into_response());
+        }
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": format!("User account '{username}' has expired") })),
+        ));
+    }
+
     let db_admin = existing_db_user.as_ref().is_some_and(|u| u.is_admin);
 
     let is_admin = db_admin || config_admin || role_admin;
 
     info!("User '{username}' successfully authenticated via OIDC (is_admin: {is_admin})");
 
-    // Create or update user in database with full admin flag
+    // Create or update user in database with full admin flag & preserved expires_at
     if let Err(e) = create_user(
         &username,
         existing_db_user.as_ref().and_then(|u| u.limit_to_models.as_ref()),
         existing_db_user.as_ref().and_then(|u| u.log_request_body),
         is_admin,
+        existing_db_user.as_ref().and_then(|u| u.expires_at),
     )
     .await
     {
@@ -753,6 +796,8 @@ async fn auth_me(user: AuthUser) -> Json<serde_json::Value> {
         "is_admin": user.is_admin,
         "models": user.user.as_ref().and_then(|u| u.limit_to_models.clone()),
         "log_request_body": user.user.as_ref().and_then(|u| u.log_request_body),
+        "expires_at": user.user.as_ref().and_then(|u| u.expires_at),
+        "is_expired": user.user.as_ref().is_some_and(crate::db::user::User::is_expired),
     }))
 }
 

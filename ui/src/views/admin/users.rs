@@ -43,6 +43,7 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
     let mut form_is_admin = use_signal(|| false);
     let mut form_log_body = use_signal(|| true);
     let mut form_models = use_signal(String::new);
+    let mut form_expires_at = use_signal(String::new);
 
     let _ = use_resource(move || async move {
         load_users_action(is_loading, users, toasts);
@@ -53,6 +54,7 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
         form_is_admin.set(false);
         form_log_body.set(true);
         form_models.set(String::new());
+        form_expires_at.set(String::new());
 
         editing_user.set(Some((
             AdminUserRecord {
@@ -60,6 +62,7 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                 limit_to_models: None,
                 log_request_body: Some(true),
                 is_admin: false,
+                expires_at: None,
             },
             true,
         )));
@@ -89,11 +92,25 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
             )
         };
 
+        let exp_str = form_expires_at.read().trim().to_string();
+        let expires_at = if exp_str.is_empty() {
+            None
+        } else {
+            let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_str(&exp_str));
+            let time = d.get_time();
+            if time.is_nan() {
+                None
+            } else {
+                Some((time / 1000.0) as i64)
+            }
+        };
+
         let payload = AdminUserRecord {
             username,
             limit_to_models: models,
             log_request_body: Some(*form_log_body.read()),
             is_admin: *form_is_admin.read(),
+            expires_at,
         };
 
         spawn(async move {
@@ -203,6 +220,7 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                                 th { "Role" }
                                 th { "Model Access" }
                                 th { "Payload Logging" }
+                                th { "Expires" }
                                 th { class: "text-right", "Actions" }
                             }
                         }
@@ -210,7 +228,7 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                             if users.read().is_empty() {
                                 tr {
                                     td {
-                                        colspan: 5,
+                                        colspan: 6,
                                         class: "text-muted",
                                         style: "text-align: center; padding: 2rem;",
                                         if *is_loading.read() { "Loading users..." } else { "No users registered." }
@@ -240,6 +258,24 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                                             span { class: "text-xs text-muted", "Enabled" }
                                         } else {
                                             span { class: "text-xs text-dim", "Disabled" }
+                                        }
+                                    }
+                                    td {
+                                        {
+                                            if let Some(exp) = user.expires_at {
+                                                let now = (js_sys::Date::now() / 1000.0) as i64;
+                                                let date_str = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64((exp * 1000) as f64))
+                                                    .to_locale_string("en-US", &wasm_bindgen::JsValue::UNDEFINED)
+                                                    .as_string()
+                                                    .unwrap_or_else(|| format!("{exp}"));
+                                                if now > exp {
+                                                    rsx! { GlassBadge { variant: "danger", "Expired ({date_str})" } }
+                                                } else {
+                                                    rsx! { GlassBadge { variant: "warning", "{date_str}" } }
+                                                }
+                                            } else {
+                                                rsx! { GlassBadge { "Never" } }
+                                            }
                                         }
                                     }
                                     td {
@@ -282,6 +318,18 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                                                                 .map(|m| m.iter().cloned().collect::<Vec<_>>().join(", "))
                                                                 .unwrap_or_default(),
                                                         );
+
+                                                        if let Some(exp) = u.expires_at {
+                                                            let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64((exp * 1000) as f64));
+                                                            let iso = d.to_iso_string().as_string().unwrap_or_default();
+                                                            if iso.len() >= 16 {
+                                                                form_expires_at.set(iso[..16].to_string());
+                                                            } else {
+                                                                form_expires_at.set(String::new());
+                                                            }
+                                                        } else {
+                                                            form_expires_at.set(String::new());
+                                                        }
 
                                                         editing_user.set(Some((u.clone(), false)));
                                                     }
@@ -332,6 +380,17 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                                 placeholder: "meta-llama/Llama-3-8B-Instruct, mistralai/Mistral-7B",
                                 value: "{form_models.read()}",
                                 oninput: move |evt| form_models.set(evt.value()),
+                            }
+                        }
+
+                        div {
+                            class: "form-group",
+                            label { class: "form-label", "Account Expiration (leave empty for never expires)" }
+                            input {
+                                r#type: "datetime-local",
+                                class: "glass-input",
+                                value: "{form_expires_at.read()}",
+                                oninput: move |evt| form_expires_at.set(evt.value()),
                             }
                         }
 
