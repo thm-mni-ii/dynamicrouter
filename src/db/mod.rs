@@ -6,5 +6,6 @@ pub mod instance;
 pub mod legacy_migration;
 pub mod model;
 pub mod openai_api;
+pub mod rate_limit;
 pub mod request;
 pub mod user;

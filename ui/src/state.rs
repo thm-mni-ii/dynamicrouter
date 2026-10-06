@@ -17,6 +17,7 @@ pub enum ActiveTab {
     AdminOpenAiApis,
     AdminBackends,
     AdminUsers,
+    AdminRateLimits,
     AdminFactoryGpus,
     AdminInstances,
     AdminAliases,
@@ -32,6 +33,7 @@ impl ActiveTab {
                 | Self::AdminOpenAiApis
                 | Self::AdminBackends
                 | Self::AdminUsers
+                | Self::AdminRateLimits
                 | Self::AdminFactoryGpus
                 | Self::AdminInstances
                 | Self::AdminAliases
@@ -52,6 +54,7 @@ impl fmt::Display for ActiveTab {
             Self::AdminOpenAiApis => write!(f, "OpenAI APIs"),
             Self::AdminBackends => write!(f, "Backends"),
             Self::AdminUsers => write!(f, "Users"),
+            Self::AdminRateLimits => write!(f, "Rate Limits"),
             Self::AdminFactoryGpus => write!(f, "Factory GPUs"),
             Self::AdminInstances => write!(f, "Instances"),
             Self::AdminAliases => write!(f, "Aliases"),
@@ -75,6 +78,7 @@ pub fn tab_from_path(path: &str) -> ActiveTab {
         "admin/openai-apis" | "admin/openai_apis" | "admin/openai" => ActiveTab::AdminOpenAiApis,
         "admin/backends" => ActiveTab::AdminBackends,
         "admin/users" => ActiveTab::AdminUsers,
+        "admin/rate-limits" | "admin/rate_limits" | "admin/ratelimits" | "admin/quotas" => ActiveTab::AdminRateLimits,
         "admin/gpus" | "admin/factory-gpus" | "admin/factory_gpus" => ActiveTab::AdminFactoryGpus,
         "admin/instances" => ActiveTab::AdminInstances,
         "admin/aliases" => ActiveTab::AdminAliases,
@@ -94,6 +98,7 @@ pub fn path_for_tab(tab: ActiveTab) -> &'static str {
         ActiveTab::AdminOpenAiApis => "/admin/openai-apis",
         ActiveTab::AdminBackends => "/admin/backends",
         ActiveTab::AdminUsers => "/admin/users",
+        ActiveTab::AdminRateLimits => "/admin/rate-limits",
         ActiveTab::AdminFactoryGpus => "/admin/gpus",
         ActiveTab::AdminInstances => "/admin/instances",
         ActiveTab::AdminAliases => "/admin/aliases",

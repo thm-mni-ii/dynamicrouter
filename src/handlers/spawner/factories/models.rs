@@ -135,6 +135,7 @@ impl HttpModel {
                 .map(|ct| ct.to_str().unwrap().to_string()),
             content_length: res.content_length(),
             request_id: None,
+            rate_limit_headers: None,
             body: Box::new(StreamAdapter::new(res.bytes_stream())),
         })
     }

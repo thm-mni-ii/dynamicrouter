@@ -555,3 +555,41 @@ pub fn IconShield(#[props(default = 16)] size: u32, #[props(into, default)] clas
         }
     }
 }
+
+#[component]
+pub fn IconGauge(#[props(default = 16)] size: u32, #[props(into, default)] class: String) -> Element {
+    rsx! {
+        svg {
+            class: "icon {class}",
+            width: "{size}",
+            height: "{size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            path { d: "m12 14 4-4" }
+            path { d: "M3.34 19a10 10 0 1 1 17.32 0" }
+        }
+    }
+}
+
+#[component]
+pub fn IconClock(#[props(default = 16)] size: u32, #[props(into, default)] class: String) -> Element {
+    rsx! {
+        svg {
+            class: "icon {class}",
+            width: "{size}",
+            height: "{size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            circle { cx: "12", cy: "12", r: "10" }
+            polyline { points: "12 6 12 12 16 14" }
+        }
+    }
+}

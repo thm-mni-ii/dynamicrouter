@@ -16,6 +16,9 @@ pub struct Request {
     pub request_body: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_body: Option<String>,
+    pub prompt_tokens: Option<i64>,
+    pub completion_tokens: Option<i64>,
+    pub total_tokens: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -54,6 +57,9 @@ pub struct MetricsSummary {
     pub requests_last_5m: i64,
     pub requests_last_1h: i64,
     pub requests_last_24h: i64,
+    pub total_prompt_tokens: i64,
+    pub total_completion_tokens: i64,
+    pub total_tokens: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +71,7 @@ pub struct ModelMetrics {
     pub avg_duration_secs: Option<f64>,
     pub active_instances: i64,
     pub last_request_enqueue: Option<i64>,
+    pub total_tokens: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +82,7 @@ pub struct UserMetrics {
     pub completed_requests: i64,
     pub avg_duration_secs: Option<f64>,
     pub last_request_enqueue: Option<i64>,
+    pub total_tokens: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +90,7 @@ pub struct TimeseriesPoint {
     pub timestamp: i64,
     pub request_count: i64,
     pub avg_duration_secs: Option<f64>,
+    pub total_tokens: i64,
 }
 
 pub async fn count_pending_requests_for(model: &str) -> Result<i64, anyhow::Error> {
@@ -96,7 +105,7 @@ pub async fn count_pending_requests_for(model: &str) -> Result<i64, anyhow::Erro
 
 pub async fn latest_for_each_model() -> Result<Vec<Request>, anyhow::Error> {
     Ok(sqlx::query_as::<_, Request>(
-        "SELECT id, model, MAX(enqueue) AS enqueue, done, instance, user, request_body, response_body FROM request GROUP BY model"
+        "SELECT id, model, MAX(enqueue) AS enqueue, done, instance, user, request_body, response_body, prompt_tokens, completion_tokens, total_tokens FROM request GROUP BY model"
     )
     .fetch_all(get_executor())
     .await?)
@@ -107,17 +116,21 @@ pub async fn create_request(
     instance: &str,
     user: &str,
     request_body: Option<&serde_json::Value>,
+    prompt_tokens: Option<i64>,
 ) -> Result<String, anyhow::Error> {
     let id = Uuid::new_v4().to_string();
     let body_str = request_body.map(serde_json::to_string).transpose()?;
+    let p_tokens = prompt_tokens.unwrap_or(0);
     sqlx::query(
-        "INSERT INTO request (id, model, enqueue, instance, user, request_body) VALUES (?, ?, unixepoch(), ?, ?, ?)",
+        "INSERT INTO request (id, model, enqueue, instance, user, request_body, prompt_tokens, completion_tokens, total_tokens) VALUES (?, ?, unixepoch(), ?, ?, ?, ?, 0, ?)",
     )
     .bind(&id)
     .bind(model)
     .bind(instance)
     .bind(user)
     .bind(body_str)
+    .bind(p_tokens)
+    .bind(p_tokens)
     .execute(get_executor())
     .await?;
     Ok(id)
@@ -140,9 +153,47 @@ pub async fn save_response_body(id: &str, body: &str) -> Result<(), anyhow::Erro
     Ok(())
 }
 
+pub async fn save_response_body_and_tokens(
+    id: &str,
+    body: &str,
+    prompt_tokens: i64,
+    completion_tokens: i64,
+    total_tokens: i64,
+) -> Result<(), anyhow::Error> {
+    sqlx::query(
+        "UPDATE request SET response_body = ?, prompt_tokens = ?, completion_tokens = ?, total_tokens = ? WHERE id = ?",
+    )
+    .bind(body)
+    .bind(prompt_tokens)
+    .bind(completion_tokens)
+    .bind(total_tokens)
+    .bind(id)
+    .execute(get_executor())
+    .await?;
+    Ok(())
+}
+
+pub async fn update_request_tokens(
+    id: &str,
+    prompt_tokens: i64,
+    completion_tokens: i64,
+    total_tokens: i64,
+) -> Result<(), anyhow::Error> {
+    sqlx::query(
+        "UPDATE request SET prompt_tokens = ?, completion_tokens = ?, total_tokens = ? WHERE id = ?",
+    )
+    .bind(prompt_tokens)
+    .bind(completion_tokens)
+    .bind(total_tokens)
+    .bind(id)
+    .execute(get_executor())
+    .await?;
+    Ok(())
+}
+
 pub async fn get_request_by_id(id: &str) -> Result<Option<Request>, anyhow::Error> {
     let req = sqlx::query_as::<_, Request>(
-        "SELECT id, model, enqueue, done, instance, user, request_body, response_body FROM request WHERE id = ?",
+        "SELECT id, model, enqueue, done, instance, user, request_body, response_body, prompt_tokens, completion_tokens, total_tokens FROM request WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(get_executor())
@@ -194,9 +245,9 @@ pub async fn get_requests(filter: &RequestFilter) -> Result<PaginatedRequests, a
         .await?;
 
     let select_columns = if include_bodies {
-        "id, model, enqueue, done, instance, user, request_body, response_body"
+        "id, model, enqueue, done, instance, user, request_body, response_body, prompt_tokens, completion_tokens, total_tokens"
     } else {
-        "id, model, enqueue, done, instance, user, NULL AS request_body, NULL AS response_body"
+        "id, model, enqueue, done, instance, user, NULL AS request_body, NULL AS response_body, prompt_tokens, completion_tokens, total_tokens"
     };
 
     let data_query = format!(
@@ -305,6 +356,24 @@ pub async fn get_metrics_summary() -> Result<MetricsSummary, anyhow::Error> {
             .await
             .unwrap_or(0);
 
+    let total_prompt_tokens: i64 =
+        sqlx::query_scalar("SELECT COALESCE(SUM(prompt_tokens), 0) FROM request")
+            .fetch_one(get_executor())
+            .await
+            .unwrap_or(0);
+
+    let total_completion_tokens: i64 =
+        sqlx::query_scalar("SELECT COALESCE(SUM(completion_tokens), 0) FROM request")
+            .fetch_one(get_executor())
+            .await
+            .unwrap_or(0);
+
+    let total_tokens: i64 =
+        sqlx::query_scalar("SELECT COALESCE(SUM(total_tokens), 0) FROM request")
+            .fetch_one(get_executor())
+            .await
+            .unwrap_or(0);
+
     Ok(MetricsSummary {
         total_requests,
         pending_requests,
@@ -319,6 +388,9 @@ pub async fn get_metrics_summary() -> Result<MetricsSummary, anyhow::Error> {
         requests_last_5m,
         requests_last_1h,
         requests_last_24h,
+        total_prompt_tokens,
+        total_completion_tokens,
+        total_tokens,
     })
 }
 
@@ -330,6 +402,7 @@ struct ModelMetricsRow {
     completed_requests: i64,
     avg_duration: Option<f64>,
     last_enqueue: Option<i64>,
+    total_tokens: Option<i64>,
 }
 
 pub async fn get_model_metrics() -> Result<Vec<ModelMetrics>, anyhow::Error> {
@@ -341,7 +414,8 @@ pub async fn get_model_metrics() -> Result<Vec<ModelMetrics>, anyhow::Error> {
             SUM(CASE WHEN done IS NULL THEN 1 ELSE 0 END) AS pending_requests,
             SUM(CASE WHEN done IS NOT NULL THEN 1 ELSE 0 END) AS completed_requests,
             AVG(CASE WHEN done IS NOT NULL AND done >= enqueue THEN (done - enqueue) ELSE NULL END) AS avg_duration,
-            MAX(enqueue) AS last_enqueue
+            MAX(enqueue) AS last_enqueue,
+            SUM(total_tokens) AS total_tokens
         FROM request
         GROUP BY model
         ORDER BY total_requests DESC
@@ -367,6 +441,7 @@ pub async fn get_model_metrics() -> Result<Vec<ModelMetrics>, anyhow::Error> {
             avg_duration_secs: row.avg_duration,
             active_instances,
             last_request_enqueue: row.last_enqueue,
+            total_tokens: row.total_tokens.unwrap_or(0),
         });
     }
 
@@ -381,6 +456,7 @@ struct UserMetricsRow {
     completed_requests: i64,
     avg_duration: Option<f64>,
     last_enqueue: Option<i64>,
+    total_tokens: Option<i64>,
 }
 
 pub async fn get_user_metrics(username: Option<&str>) -> Result<Vec<UserMetrics>, anyhow::Error> {
@@ -393,7 +469,8 @@ pub async fn get_user_metrics(username: Option<&str>) -> Result<Vec<UserMetrics>
                 SUM(CASE WHEN done IS NULL THEN 1 ELSE 0 END) AS pending_requests,
                 SUM(CASE WHEN done IS NOT NULL THEN 1 ELSE 0 END) AS completed_requests,
                 AVG(CASE WHEN done IS NOT NULL AND done >= enqueue THEN (done - enqueue) ELSE NULL END) AS avg_duration,
-                MAX(enqueue) AS last_enqueue
+                MAX(enqueue) AS last_enqueue,
+                SUM(total_tokens) AS total_tokens
             FROM request
             WHERE user = ?
             GROUP BY user
@@ -411,7 +488,8 @@ pub async fn get_user_metrics(username: Option<&str>) -> Result<Vec<UserMetrics>
                 SUM(CASE WHEN done IS NULL THEN 1 ELSE 0 END) AS pending_requests,
                 SUM(CASE WHEN done IS NOT NULL THEN 1 ELSE 0 END) AS completed_requests,
                 AVG(CASE WHEN done IS NOT NULL AND done >= enqueue THEN (done - enqueue) ELSE NULL END) AS avg_duration,
-                MAX(enqueue) AS last_enqueue
+                MAX(enqueue) AS last_enqueue,
+                SUM(total_tokens) AS total_tokens
             FROM request
             GROUP BY user
             ORDER BY total_requests DESC
@@ -430,6 +508,7 @@ pub async fn get_user_metrics(username: Option<&str>) -> Result<Vec<UserMetrics>
             completed_requests: r.completed_requests,
             avg_duration_secs: r.avg_duration,
             last_request_enqueue: r.last_enqueue,
+            total_tokens: r.total_tokens.unwrap_or(0),
         })
         .collect())
 }
@@ -439,6 +518,7 @@ struct TimeseriesRow {
     bucket: i64,
     request_count: i64,
     avg_duration: Option<f64>,
+    total_tokens: Option<i64>,
 }
 
 pub async fn get_timeseries_metrics(
@@ -455,7 +535,8 @@ pub async fn get_timeseries_metrics(
         SELECT
             (enqueue / {interval}) * {interval} AS bucket,
             COUNT(*) AS request_count,
-            AVG(CASE WHEN done IS NOT NULL AND done >= enqueue THEN (done - enqueue) ELSE NULL END) AS avg_duration
+            AVG(CASE WHEN done IS NOT NULL AND done >= enqueue THEN (done - enqueue) ELSE NULL END) AS avg_duration,
+            SUM(total_tokens) AS total_tokens
         FROM request
         WHERE enqueue >= {start_time}
         GROUP BY bucket
@@ -473,6 +554,7 @@ pub async fn get_timeseries_metrics(
             timestamp: r.bucket,
             request_count: r.request_count,
             avg_duration_secs: r.avg_duration,
+            total_tokens: r.total_tokens.unwrap_or(0),
         })
         .collect())
 }

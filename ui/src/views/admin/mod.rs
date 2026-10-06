@@ -5,6 +5,7 @@ pub mod factory_gpus;
 pub mod instances;
 pub mod models;
 pub mod openai_apis;
+pub mod rate_limits;
 pub mod system_logs;
 pub mod users;
 
@@ -15,5 +16,6 @@ pub use factory_gpus::*;
 pub use instances::*;
 pub use models::*;
 pub use openai_apis::*;
+pub use rate_limits::*;
 pub use system_logs::*;
 pub use users::*;

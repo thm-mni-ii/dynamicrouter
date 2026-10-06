@@ -186,6 +186,7 @@ impl Handler for OpenaiHandler {
         request: &Value,
         username: &str,
         user_log_request_body: Option<bool>,
+        prompt_tokens: i64,
     ) -> Result<ModelResponse, anyhow::Error> {
         let ResolvedTarget {
             api_name,
@@ -206,6 +207,12 @@ impl Handler for OpenaiHandler {
         let mut request_body = request.clone();
         if let Some(obj) = request_body.as_object_mut() {
             obj.insert("model".to_string(), json!(target_model));
+            // Ensure stream_options.include_usage = true for streaming chat completions
+            if obj.get("stream").and_then(Value::as_bool).unwrap_or(false)
+                && !obj.contains_key("stream_options")
+            {
+                obj.insert("stream_options".to_string(), json!({ "include_usage": true }));
+            }
         }
 
         let model_name = model.to_string();
@@ -220,7 +227,7 @@ impl Handler for OpenaiHandler {
         };
 
         let request_id =
-            create_request(&model_name, &instance_name, username, logged_request_body).await?;
+            create_request(&model_name, &instance_name, username, logged_request_body, Some(prompt_tokens)).await?;
 
         let mut req_builder = self
             .client
@@ -256,10 +263,11 @@ impl Handler for OpenaiHandler {
                     content_type,
                     content_length,
                     request_id: None,
+                    rate_limit_headers: None,
                     body: Box::new(StreamAdapter::new(res.bytes_stream())),
                 };
 
-                Ok(wrap_response_with_logging(model_response, request_id))
+                Ok(wrap_response_with_logging(model_response, request_id, prompt_tokens))
             }
             Err(err) => {
                 error!("Error while sending request to OpenAI API '{api_name}': {err}");

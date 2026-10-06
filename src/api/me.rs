@@ -1,10 +1,12 @@
 use crate::auth::AuthUser;
+use crate::db::rate_limit::{calculate_usage_for_rule, get_matching_rate_limits};
 use crate::db::request::{RequestFilter, get_requests, get_user_metrics};
 use crate::db::user::{delete_user_token_for_user, generate_and_add_user_token, get_user_tokens};
 use axum::extract::{Path, Query};
 use axum::http::StatusCode;
 use axum::routing::{delete, get};
 use axum::{Json, Router};
+use chrono::Utc;
 use serde_json::json;
 
 pub fn me_routes() -> Router {
@@ -12,6 +14,7 @@ pub fn me_routes() -> Router {
         .route("/", get(get_me))
         .route("/tokens", get(get_tokens).post(create_token))
         .route("/tokens/{token_hash}", delete(delete_token))
+        .route("/rate-limits", get(get_my_rate_limits))
         .route("/logs", get(get_logs))
         .route("/metrics", get(get_metrics))
 }
@@ -82,6 +85,30 @@ async fn delete_token(
             Json(json!({ "error": "Token not found" })),
         ))
     }
+}
+
+async fn get_my_rate_limits(
+    user: AuthUser,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let rules = get_matching_rate_limits(&user.username, "*")
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Failed to fetch rate limits: {e}") })),
+            )
+        })?;
+
+    let now = Utc::now().timestamp();
+    let mut usage_list = Vec::new();
+    for rule in &rules {
+        let model = rule.model.as_deref().unwrap_or("*");
+        if let Ok(info) = calculate_usage_for_rule(rule, &user.username, model, now).await {
+            usage_list.push(info);
+        }
+    }
+
+    Ok(Json(json!({ "rate_limits": usage_list })))
 }
 
 async fn get_logs(

@@ -258,6 +258,19 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                                             button {
                                                 class: "glass-btn btn-secondary btn-sm",
                                                 onclick: {
+                                                    let _un = user.username.clone();
+                                                    move |_| {
+                                                        if let Some(w) = window() {
+                                                            let _ = w.location().set_pathname("/admin/rate-limits");
+                                                        }
+                                                    }
+                                                },
+                                                IconGauge { size: 14 }
+                                                span { "Limits" }
+                                            }
+                                            button {
+                                                class: "glass-btn btn-secondary btn-sm",
+                                                onclick: {
                                                     let u = user.clone();
                                                     move |_| {
                                                         form_username.set(u.username.clone());

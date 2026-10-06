@@ -43,6 +43,7 @@ pub trait Handler: Send + Sync {
         request: &Value,
         username: &str,
         user_log_request_body: Option<bool>,
+        prompt_tokens: i64,
     ) -> Result<ModelResponse, anyhow::Error>;
 }
 
@@ -71,6 +72,7 @@ impl Handler for RoutingHandler {
         request: &Value,
         username: &str,
         user_log_request_body: Option<bool>,
+        prompt_tokens: i64,
     ) -> Result<ModelResponse, Error> {
         let model_str = model.to_string();
 
@@ -84,6 +86,7 @@ impl Handler for RoutingHandler {
                             request,
                             username,
                             user_log_request_body,
+                            prompt_tokens,
                         )
                         .await
                 }
@@ -95,6 +98,7 @@ impl Handler for RoutingHandler {
                             request,
                             username,
                             user_log_request_body,
+                            prompt_tokens,
                         )
                         .await
                 }
@@ -112,6 +116,7 @@ impl Handler for RoutingHandler {
                         request,
                         username,
                         user_log_request_body,
+                        prompt_tokens,
                     )
                     .await;
             }

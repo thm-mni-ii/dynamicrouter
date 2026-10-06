@@ -7,6 +7,7 @@ pub mod me;
 pub mod metrics;
 pub mod models;
 pub mod openai_apis;
+pub mod rate_limits;
 pub mod users;
 
 use axum::Router;
@@ -15,6 +16,7 @@ pub fn api_routes() -> Router {
     Router::new()
         .nest("/me", me::me_routes())
         .nest("/models", models::models_routes())
+        .nest("/rate-limits", rate_limits::rate_limits_routes())
         .nest("/openai-apis", openai_apis::openai_apis_routes())
         .nest("/users", users::users_routes())
         .nest("/aliases", aliases::aliases_routes())

@@ -568,6 +568,112 @@ pub async fn delete_admin_alias(alias: &str) -> Result<(), String> {
 }
 
 // --------------------------------------------------------------------------
+// Admin Rate Limits (/api/rate-limits) & User Rate Limits (/api/me/rate-limits)
+// --------------------------------------------------------------------------
+pub async fn fetch_admin_rate_limits(
+    user: Option<&str>,
+    model: Option<&str>,
+) -> Result<Vec<RateLimitRecord>, String> {
+    let mut url = format!("{}/api/rate-limits", get_origin());
+    let mut params = Vec::new();
+    if let Some(u) = user {
+        if !u.is_empty() {
+            params.push(format!("user={u}"));
+        }
+    }
+    if let Some(m) = model {
+        if !m.is_empty() {
+            params.push(format!("model={m}"));
+        }
+    }
+    if !params.is_empty() {
+        url.push('?');
+        url.push_str(&params.join("&"));
+    }
+
+    let req = apply_auth(client().get(&url));
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    let wrapper = handle_json_response::<crate::models::RateLimitListResponse>(res).await?;
+    Ok(wrapper.rate_limits)
+}
+
+pub async fn fetch_admin_rate_limit_usage(
+    user: Option<&str>,
+    model: Option<&str>,
+) -> Result<Vec<RateLimitUsage>, String> {
+    let mut url = format!("{}/api/rate-limits/usage", get_origin());
+    let mut params = Vec::new();
+    if let Some(u) = user {
+        if !u.is_empty() {
+            params.push(format!("user={u}"));
+        }
+    }
+    if let Some(m) = model {
+        if !m.is_empty() {
+            params.push(format!("model={m}"));
+        }
+    }
+    if !params.is_empty() {
+        url.push('?');
+        url.push_str(&params.join("&"));
+    }
+
+    let req = apply_auth(client().get(&url));
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    let wrapper = handle_json_response::<crate::models::RateLimitUsageListResponse>(res).await?;
+    Ok(wrapper.usages)
+}
+
+pub async fn fetch_my_rate_limits() -> Result<Vec<RateLimitUsage>, String> {
+    let url = format!("{}/api/me/rate-limits", get_origin());
+    let req = apply_auth(client().get(&url));
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    let wrapper = handle_json_response::<crate::models::MyRateLimitsResponse>(res).await?;
+    Ok(wrapper.rate_limits)
+}
+
+pub async fn save_admin_rate_limit(rule: &RateLimitRecord, is_new: bool) -> Result<(), String> {
+    let url = if is_new {
+        format!("{}/api/rate-limits", get_origin())
+    } else {
+        format!("{}/api/rate-limits/{}", get_origin(), rule.id)
+    };
+
+    let payload = serde_json::json!({
+        "user": rule.user,
+        "model": rule.model,
+        "time_window": rule.time_window,
+        "limit_value": rule.limit_value,
+        "unit": rule.unit,
+    });
+
+    let req = if is_new {
+        apply_auth(client().post(&url).json(&payload))
+    } else {
+        apply_auth(client().put(&url).json(&payload))
+    };
+
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        let err = res.text().await.unwrap_or_default();
+        Err(format!("Save rate limit failed: {err}"))
+    }
+}
+
+pub async fn delete_admin_rate_limit(id: &str) -> Result<(), String> {
+    let url = format!("{}/api/rate-limits/{id}", get_origin());
+    let req = apply_auth(client().delete(&url));
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("Delete rate limit failed: {}", res.status()))
+    }
+}
+
+// --------------------------------------------------------------------------
 // Admin System Logs (/api/logs/requests)
 // --------------------------------------------------------------------------
 pub async fn fetch_admin_system_logs(

@@ -4,11 +4,11 @@ use crate::db::openai_api::get_all_openai_apis;
 use crate::db::user::{User, get_user_by_token_hash};
 use crate::handlers::{GenerationType, Handler, get_handler};
 use crate::utils::ModelRef;
-use crate::utils::response::ModelResponse;
 use axum::Json;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use log::{debug, error, warn};
 use serde_json::{Value, json};
 use sha2::Digest;
@@ -16,15 +16,15 @@ use sha2::Digest;
 pub async fn completions(
     authorization: Authorization,
     body: Json<Value>,
-) -> Result<ModelResponse, StatusCode> {
-    generate(GenerationType::Completions, authorization, body).await?
+) -> Response {
+    generate(GenerationType::Completions, authorization, body).await
 }
 
 pub async fn embeddings(
     authorization: Authorization,
     body: Json<Value>,
-) -> Result<ModelResponse, StatusCode> {
-    generate(GenerationType::Embeddings, authorization, body).await?
+) -> Response {
+    generate(GenerationType::Embeddings, authorization, body).await
 }
 
 pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusCode> {
@@ -152,7 +152,7 @@ async fn extract_models(
     authorization: &Authorization,
     body: &Json<Value>,
 ) -> Result<Vec<ModelRef>, StatusCode> {
-    let Some(raw_models_str) = body.get("model").and_then(|v| v.as_str()) else {
+    let Some(raw_models_str) = body.get("model").and_then(Value::as_str) else {
         return Err(StatusCode::BAD_REQUEST);
     };
 
@@ -226,31 +226,56 @@ async fn generate(
     generation_type: GenerationType,
     authorization: Authorization,
     body: Json<Value>,
-) -> Result<Result<ModelResponse, StatusCode>, StatusCode> {
-    let models = extract_models(&authorization, &body).await?;
+) -> Response {
+    let models = match extract_models(&authorization, &body).await {
+        Ok(m) => m,
+        Err(status) => return status.into_response(),
+    };
 
-    let mut result = Err(StatusCode::BAD_REQUEST);
-    for model in models {
-        let body = replace_model(&body.0, &model);
-        match get_handler()
-            .generate(
-                generation_type,
-                &model,
-                &body,
-                &authorization.username,
-                authorization.user.log_request_body,
-            )
-            .await
-        {
-            Ok(res) => {
-                result = Ok(res);
+    let prompt_tokens = crate::rate_limit::estimate_prompt_tokens(&body.0);
+
+    // Evaluate rate limits across models
+    let mut rate_headers = Vec::new();
+    for model in &models {
+        let model_str = model.to_string();
+        match crate::rate_limit::check_rate_limits(&authorization.username, &model_str, prompt_tokens).await {
+            Ok(headers) => {
+                rate_headers.extend(headers);
             }
-            Err(err) => {
-                error!("Error while generating using model: {err:?}");
-                result = Err(StatusCode::BAD_GATEWAY);
+            Err(rejection) => {
+                return rejection.into_response();
             }
         }
     }
 
-    Ok(result)
+    for model in models {
+        let body_val = replace_model(&body.0, &model);
+        match get_handler()
+            .generate(
+                generation_type,
+                &model,
+                &body_val,
+                &authorization.username,
+                authorization.user.log_request_body,
+                prompt_tokens,
+            )
+            .await
+        {
+            Ok(mut res) => {
+                if !rate_headers.is_empty() {
+                    res.rate_limit_headers = Some(rate_headers);
+                }
+                return res.into_response();
+            }
+            Err(err) => {
+                error!("Error while generating using model: {err:?}");
+            }
+        }
+    }
+
+    (
+        StatusCode::BAD_GATEWAY,
+        Json(json!({"error": "Error while generating using model"})),
+    )
+        .into_response()
 }

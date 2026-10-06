@@ -224,6 +224,49 @@ pub struct TimeseriesPoint {
 }
 
 // --------------------------------------------------------------------------
+// Rate Limits & Quotas
+// --------------------------------------------------------------------------
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RateLimitRecord {
+    pub id: String,
+    pub user: Option<String>,
+    pub model: Option<String>,
+    pub time_window: String,
+    pub limit_value: i64,
+    pub unit: String,
+    pub created_at: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RateLimitUsage {
+    pub id: String,
+    pub user: Option<String>,
+    pub model: Option<String>,
+    pub time_window: String,
+    pub limit_value: i64,
+    pub unit: String,
+    pub used: i64,
+    pub remaining: i64,
+    pub reset_in_seconds: Option<i64>,
+    pub reset_timestamp: Option<i64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RateLimitListResponse {
+    pub rate_limits: Vec<RateLimitRecord>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RateLimitUsageListResponse {
+    pub usages: Vec<RateLimitUsage>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MyRateLimitsResponse {
+    pub rate_limits: Vec<RateLimitUsage>,
+}
+
+// --------------------------------------------------------------------------
 // Chat API Payloads
 // --------------------------------------------------------------------------
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
