@@ -1,6 +1,8 @@
 use crate::models::*;
 use reqwest::{Client, Response};
 use serde::{de::DeserializeOwned, Deserialize};
+use wasm_bindgen::JsCast;
+use wasm_bindgen_futures::JsFuture;
 use web_sys::window;
 
 pub fn get_origin() -> String {
@@ -108,6 +110,224 @@ pub async fn send_chat_completion(
     let req = apply_auth(client().post(&url).json(request));
     let res = req.send().await.map_err(|e| e.to_string())?;
     handle_json_response(res).await
+}
+
+pub async fn send_chat_completion_stream<F>(
+    request: &ChatCompletionRequest,
+    mut on_chunk: F,
+) -> Result<(), String>
+where
+    F: FnMut(&str),
+{
+    let origin = get_origin();
+    let url = format!("{origin}/v1/chat/completions");
+
+    let window = web_sys::window().ok_or_else(|| "No global window found".to_string())?;
+
+    let body_json = serde_json::to_string(request)
+        .map_err(|e| format!("Failed to serialize request: {e}"))?;
+
+    let opts = web_sys::RequestInit::new();
+    opts.set_method("POST");
+    opts.set_body(&wasm_bindgen::JsValue::from_str(&body_json));
+
+    let headers = web_sys::Headers::new()
+        .map_err(|e| format!("Failed to create headers: {e:?}"))?;
+    headers
+        .set("Content-Type", "application/json")
+        .map_err(|e| format!("Failed to set Content-Type header: {e:?}"))?;
+    headers
+        .set("Accept", "text/event-stream")
+        .map_err(|e| format!("Failed to set Accept header: {e:?}"))?;
+
+    if let Some(token) = get_stored_token() {
+        let trimmed = token.trim();
+        if !trimmed.is_empty() {
+            headers
+                .set("Authorization", &format!("Bearer {trimmed}"))
+                .map_err(|e| format!("Failed to set Authorization header: {e:?}"))?;
+        }
+    }
+
+    opts.set_headers(&headers);
+
+    let web_req = web_sys::Request::new_with_str_and_init(&url, &opts)
+        .map_err(|e| format!("Failed to create request: {e:?}"))?;
+
+    let resp_val = JsFuture::from(window.fetch_with_request(&web_req))
+        .await
+        .map_err(|e| format!("Fetch failed: {e:?}"))?;
+
+    let resp: web_sys::Response = resp_val
+        .dyn_into()
+        .map_err(|_| "Response cast failed".to_string())?;
+
+    let status = resp.status();
+    if !resp.ok() {
+        let text_val = JsFuture::from(
+            resp.text()
+                .map_err(|e| format!("Failed to read error body: {e:?}"))?,
+        )
+        .await
+        .map_err(|e| format!("Failed to await error body: {e:?}"))?;
+
+        let text = text_val.as_string().unwrap_or_default();
+        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(err_val) = json_val.get("error") {
+                if let Some(msg) = err_val.as_str() {
+                    return Err(format!("Error ({status}): {msg}"));
+                } else if let Some(msg) = err_val.get("message").and_then(|m| m.as_str()) {
+                    return Err(format!("Error ({status}): {msg}"));
+                }
+            }
+        }
+        let trimmed = text.trim();
+        if trimmed.starts_with("<!DOCTYPE") || trimmed.starts_with("<html") {
+            return Err(format!("HTTP {status}: Upstream returned an HTML error page"));
+        }
+        return Err(format!("HTTP {status}: {text}"));
+    }
+
+    let stream = resp
+        .body()
+        .ok_or_else(|| "Response has no body".to_string())?;
+    let reader: web_sys::ReadableStreamDefaultReader = stream
+        .get_reader()
+        .dyn_into()
+        .map_err(|_| "Failed to get stream reader".to_string())?;
+
+    let mut byte_buffer: Vec<u8> = Vec::new();
+    let mut text_buffer = String::new();
+
+    loop {
+        let read_promise = reader.read();
+        let chunk_res = JsFuture::from(read_promise)
+            .await
+            .map_err(|e| format!("Stream read error: {e:?}"))?;
+
+        let done = js_sys::Reflect::get(&chunk_res, &wasm_bindgen::JsValue::from_str("done"))
+            .map_err(|e| format!("Reflect error on 'done': {e:?}"))?
+            .as_bool()
+            .unwrap_or(false);
+
+        if done {
+            break;
+        }
+
+        let value = js_sys::Reflect::get(&chunk_res, &wasm_bindgen::JsValue::from_str("value"))
+            .map_err(|e| format!("Reflect error on 'value': {e:?}"))?;
+
+        if !value.is_undefined() && !value.is_null() {
+            let uint8_arr = js_sys::Uint8Array::new(&value);
+            byte_buffer.extend_from_slice(&uint8_arr.to_vec());
+        }
+
+        // Safely extract valid UTF-8 up to valid boundary
+        match std::str::from_utf8(&byte_buffer) {
+            Ok(s) => {
+                text_buffer.push_str(s);
+                byte_buffer.clear();
+            }
+            Err(e) => {
+                let valid_up_to = e.valid_up_to();
+                if valid_up_to > 0 {
+                    if let Ok(s) = std::str::from_utf8(&byte_buffer[..valid_up_to]) {
+                        text_buffer.push_str(s);
+                    }
+                    byte_buffer.drain(..valid_up_to);
+                }
+                if let Some(err_len) = e.error_len() {
+                    // Invalid byte sequence encountered; skip it
+                    byte_buffer.drain(..err_len);
+                }
+            }
+        }
+
+        // Process any complete SSE lines in text_buffer
+        while let Some(pos) = text_buffer.find('\n') {
+            let line = text_buffer[..pos].trim_end_matches('\r').to_string();
+            text_buffer.drain(..=pos);
+
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with(':') {
+                continue;
+            }
+
+            if let Some(data) = trimmed.strip_prefix("data:") {
+                let data = data.trim();
+                if data == "[DONE]" {
+                    continue;
+                }
+                if let Ok(chunk) = serde_json::from_str::<ChatCompletionChunk>(data) {
+                    for choice in chunk.choices {
+                        let text_val = choice
+                            .delta
+                            .content
+                            .as_deref()
+                            .or(choice.delta.reasoning_content.as_deref())
+                            .or(choice.delta.text.as_deref())
+                            .or(choice.text.as_deref());
+
+                        if let Some(content) = text_val {
+                            if !content.is_empty() {
+                                on_chunk(content);
+                            }
+                        }
+                    }
+                    if let Some(r) = chunk.response {
+                        if !r.is_empty() {
+                            on_chunk(&r);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Process any remaining data in text_buffer after EOF
+    if !byte_buffer.is_empty() {
+        let s = String::from_utf8_lossy(&byte_buffer);
+        text_buffer.push_str(&s);
+    }
+    let trimmed = text_buffer.trim();
+    if !trimmed.is_empty() {
+        if let Some(data) = trimmed.strip_prefix("data:") {
+            let data = data.trim();
+            if data != "[DONE]" {
+                if let Ok(chunk) = serde_json::from_str::<ChatCompletionChunk>(data) {
+                    for choice in chunk.choices {
+                        let text_val = choice
+                            .delta
+                            .content
+                            .as_deref()
+                            .or(choice.delta.reasoning_content.as_deref())
+                            .or(choice.delta.text.as_deref())
+                            .or(choice.text.as_deref());
+
+                        if let Some(content) = text_val {
+                            if !content.is_empty() {
+                                on_chunk(content);
+                            }
+                        }
+                    }
+                    if let Some(r) = chunk.response {
+                        if !r.is_empty() {
+                            on_chunk(&r);
+                        }
+                    }
+                }
+            }
+        } else if let Ok(resp) = serde_json::from_str::<ChatCompletionResponse>(trimmed) {
+            // Non-streaming fallback
+            if let Some(choice) = resp.choices.first() {
+                if !choice.message.content.is_empty() {
+                    on_chunk(&choice.message.content);
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // --------------------------------------------------------------------------

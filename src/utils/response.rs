@@ -51,11 +51,20 @@ pub struct ModelResponse {
 impl IntoResponse for ModelResponse {
     fn into_response(self) -> Response {
         let mut builder = Response::builder().status(self.status);
+        let is_event_stream = self
+            .content_type
+            .as_deref()
+            .is_some_and(|ct| ct.contains("text/event-stream"));
+
         if let Some(ct) = self.content_type {
             builder = builder.header(header::CONTENT_TYPE, ct);
         }
         if let Some(cl) = self.content_length {
             builder = builder.header(header::CONTENT_LENGTH, cl);
+        }
+        if is_event_stream {
+            builder = builder.header(header::CACHE_CONTROL, "no-cache, no-transform");
+            builder = builder.header("x-accel-buffering", "no");
         }
         if let Some(rid) = self.request_id {
             builder = builder.header("x-request-id", rid);

@@ -28,7 +28,13 @@ web-sys = { version = "=0.3.104", features = [
     "HtmlSelectElement",
     "HtmlTextAreaElement",
     "Navigator",
-    "Clipboard"
+    "Clipboard",
+    "Request",
+    "RequestInit",
+    "Headers",
+    "Response",
+    "ReadableStream",
+    "ReadableStreamDefaultReader"
 ] }
 
 [profile.release]

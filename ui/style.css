@@ -1079,6 +1079,29 @@ html, body {
   box-shadow: var(--glass-shadow-sm);
 }
 
+.streaming-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 1.1em;
+  margin-left: 4px;
+  vertical-align: -0.15em;
+  background-color: var(--glow-primary);
+  border-radius: 2px;
+  box-shadow: 0 0 8px rgba(var(--glow-rgb), 0.6);
+  animation: streaming-blink 0.9s infinite ease-in-out;
+}
+
+@keyframes streaming-blink {
+  0%, 100% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+  50% {
+    opacity: 0.15;
+    transform: scaleY(0.85);
+  }
+}
+
 .bubble-role-badge {
   font-size: 0.7rem;
   font-weight: 700;

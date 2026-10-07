@@ -1,8 +1,18 @@
-use crate::api::{fetch_my_models, send_chat_completion};
+use crate::api::{fetch_my_models, send_chat_completion, send_chat_completion_stream};
 use crate::components::icons::*;
 use crate::components::{GlassBadge, GlassCard};
 use crate::models::{ChatCompletionRequest, ChatMessage, UserModelStatus};
 use dioxus::prelude::*;
+
+fn scroll_chat_to_bottom() {
+    if let Some(w) = web_sys::window() {
+        if let Some(doc) = w.document() {
+            if let Some(el) = doc.get_element_by_id("chat-messages-container") {
+                el.set_scroll_top(el.scroll_height());
+            }
+        }
+    }
+}
 
 fn send_chat_action(
     mut is_loading: Signal<bool>,
@@ -12,6 +22,7 @@ fn send_chat_action(
     mut messages: Signal<Vec<ChatMessage>>,
     mut error_msg: Signal<Option<String>>,
     temperature: Signal<f32>,
+    stream_enabled: Signal<bool>,
 ) {
     let text = user_input.read().trim().to_string();
     let model_id = selected_model.read().clone();
@@ -29,7 +40,14 @@ fn send_chat_action(
 
     let mut current_msgs = messages.read().clone();
     current_msgs.push(user_msg);
+    
+    // Add placeholder assistant message
+    current_msgs.push(ChatMessage {
+        role: "assistant".to_string(),
+        content: String::new(),
+    });
     messages.set(current_msgs.clone());
+    scroll_chat_to_bottom();
 
     let mut api_messages = Vec::new();
     let sys = system_prompt.read().trim().to_string();
@@ -39,27 +57,71 @@ fn send_chat_action(
             content: sys,
         });
     }
-    api_messages.extend(current_msgs);
+    // Exclude the placeholder assistant message from the API request
+    if current_msgs.len() > 1 {
+        api_messages.extend(current_msgs[..current_msgs.len() - 1].to_vec());
+    } else {
+        api_messages.extend(current_msgs);
+    }
 
+    let is_streaming = *stream_enabled.read();
     let req = ChatCompletionRequest {
         model: model_id,
         messages: api_messages,
         temperature: Some(*temperature.read()),
         max_tokens: None,
+        stream: Some(is_streaming),
     };
 
     is_loading.set(true);
     spawn(async move {
-        match send_chat_completion(&req).await {
-            Ok(resp) => {
-                if let Some(first_choice) = resp.choices.first() {
-                    let mut msgs = messages.read().clone();
-                    msgs.push(first_choice.message.clone());
-                    messages.set(msgs);
+        if is_streaming {
+            let res = send_chat_completion_stream(&req, move |delta| {
+                let mut msgs = messages.read().clone();
+                if let Some(last) = msgs.last_mut() {
+                    if last.role == "assistant" {
+                        last.content.push_str(delta);
+                        messages.set(msgs);
+                        scroll_chat_to_bottom();
+                    }
                 }
-            }
-            Err(err) => {
+            })
+            .await;
+
+            if let Err(err) = res {
+                let mut msgs = messages.read().clone();
+                if let Some(last) = msgs.last() {
+                    if last.role == "assistant" && last.content.is_empty() {
+                        msgs.pop();
+                        messages.set(msgs);
+                    }
+                }
                 error_msg.set(Some(err));
+            }
+        } else {
+            match send_chat_completion(&req).await {
+                Ok(resp) => {
+                    if let Some(first_choice) = resp.choices.first() {
+                        let mut msgs = messages.read().clone();
+                        if let Some(last) = msgs.last_mut() {
+                            if last.role == "assistant" {
+                                last.content = first_choice.message.content.clone();
+                                messages.set(msgs);
+                                scroll_chat_to_bottom();
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    let mut msgs = messages.read().clone();
+                    if let Some(last) = msgs.last() {
+                        if last.role == "assistant" && last.content.is_empty() {
+                            msgs.pop();
+                            messages.set(msgs);
+                        }
+                    }
+                    error_msg.set(Some(err));
+                }
             }
         }
         is_loading.set(false);
@@ -76,6 +138,7 @@ pub fn ChatView() -> Element {
     let is_loading = use_signal(|| false);
     let mut error_msg = use_signal(|| Option::<String>::None);
     let mut temperature = use_signal(|| 0.7f32);
+    let mut stream_enabled = use_signal(|| true);
     let mut show_system_drawer = use_signal(|| false);
 
     // Fetch rich models on mount
@@ -235,6 +298,20 @@ pub fn ChatView() -> Element {
                                 }
                             }
                         }
+
+                        div {
+                            class: "form-group",
+                            label {
+                                class: "flex items-center justify-between cursor-pointer",
+                                span { class: "form-label mb-0", "Stream Responses" }
+                                input {
+                                    r#type: "checkbox",
+                                    class: "glass-checkbox",
+                                    checked: *stream_enabled.read(),
+                                    onchange: move |evt| stream_enabled.set(evt.checked()),
+                                }
+                            }
+                        }
                     }
 
                     div {
@@ -267,6 +344,7 @@ pub fn ChatView() -> Element {
                     
                     // Messages Thread
                     div {
+                        id: "chat-messages-container",
                         class: "chat-messages",
                         if messages.read().is_empty() {
                             div {
@@ -287,20 +365,20 @@ pub fn ChatView() -> Element {
                                     class: "bubble-role-badge",
                                     if msg.role == "user" { "You" } else { "AI Assistant" }
                                 }
-                                div {
-                                    style: "white-space: pre-wrap;",
-                                    "{msg.content}"
-                                }
-                            }
-                        }
-                        if *is_loading.read() {
-                            div {
-                                class: "chat-bubble bubble-assistant",
-                                div { class: "bubble-role-badge", "AI Assistant" }
-                                div {
-                                    class: "flex items-center gap-2",
-                                    span { class: "status-dot status-dot-pulse" }
-                                    span { class: "text-sm text-muted", "Generating response..." }
+                                if idx + 1 == messages.read().len() && *is_loading.read() && msg.role == "assistant" && msg.content.is_empty() {
+                                    div {
+                                        class: "flex items-center gap-2",
+                                        span { class: "status-dot status-dot-pulse" }
+                                        span { class: "text-sm text-muted", "Generating response..." }
+                                    }
+                                } else {
+                                    div {
+                                        style: "white-space: pre-wrap;",
+                                        "{msg.content}"
+                                        if idx + 1 == messages.read().len() && *is_loading.read() && msg.role == "assistant" {
+                                            span { class: "streaming-cursor" }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -327,14 +405,14 @@ pub fn ChatView() -> Element {
                             onkeydown: move |evt: KeyboardEvent| {
                                 if evt.key() == Key::Enter && !evt.modifiers().shift() {
                                     evt.prevent_default();
-                                    send_chat_action(is_loading, user_input, selected_model, system_prompt, messages, error_msg, temperature);
+                                    send_chat_action(is_loading, user_input, selected_model, system_prompt, messages, error_msg, temperature, stream_enabled);
                                 }
                             }
                         }
                         button {
                             class: "glass-btn btn-primary send-btn",
                             disabled: *is_loading.read() || user_input.read().trim().is_empty(),
-                            onclick: move |_| send_chat_action(is_loading, user_input, selected_model, system_prompt, messages, error_msg, temperature),
+                            onclick: move |_| send_chat_action(is_loading, user_input, selected_model, system_prompt, messages, error_msg, temperature, stream_enabled),
                             span { "Send" }
                             IconSend { size: 15 }
                         }

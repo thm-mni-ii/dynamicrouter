@@ -323,6 +323,8 @@ pub struct ChatCompletionRequest {
     pub temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -333,4 +335,42 @@ pub struct ChatChoice {
 #[derive(Clone, Debug, Deserialize)]
 pub struct ChatCompletionResponse {
     pub choices: Vec<ChatChoice>,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct ChatChunkDelta {
+    #[allow(dead_code)]
+    pub role: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_nullable_string_option")]
+    pub content: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_nullable_string_option")]
+    pub reasoning_content: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_nullable_string_option")]
+    pub text: Option<String>,
+}
+
+fn deserialize_nullable_string_option<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<String> = serde::Deserialize::deserialize(deserializer)?;
+    Ok(opt)
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct ChatChunkChoice {
+    #[serde(default)]
+    pub delta: ChatChunkDelta,
+    #[serde(default, deserialize_with = "deserialize_nullable_string_option")]
+    pub text: Option<String>,
+    #[allow(dead_code)]
+    pub finish_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct ChatCompletionChunk {
+    #[serde(default)]
+    pub choices: Vec<ChatChunkChoice>,
+    #[serde(default, deserialize_with = "deserialize_nullable_string_option")]
+    pub response: Option<String>,
 }
