@@ -218,8 +218,11 @@ pub struct FactoryGpuRecord {
     pub factory_type: String,
     pub id: String,
     pub memory: i64,
-    pub price: f64,
-    pub max_count: i64,
+    #[serde(default)]
+    pub price: Option<f64>,
+    #[serde(default)]
+    pub max_count: Option<i64>,
+    #[serde(default)]
     pub model: String,
 }
 

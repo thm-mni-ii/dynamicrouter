@@ -799,7 +799,7 @@ pub async fn delete_admin_instance(id: &str) -> Result<(), String> {
 // --------------------------------------------------------------------------
 #[derive(Deserialize)]
 struct AliasesWrapper {
-    aliases: Vec<AliasRecord>,
+    aliases: std::collections::HashMap<String, String>,
 }
 
 pub async fn fetch_admin_aliases() -> Result<Vec<AliasRecord>, String> {
@@ -807,7 +807,13 @@ pub async fn fetch_admin_aliases() -> Result<Vec<AliasRecord>, String> {
     let req = apply_auth(client().get(&url));
     let res = req.send().await.map_err(|e| e.to_string())?;
     let wrapper = handle_json_response::<AliasesWrapper>(res).await?;
-    Ok(wrapper.aliases)
+    let mut list: Vec<AliasRecord> = wrapper
+        .aliases
+        .into_iter()
+        .map(|(alias, target)| AliasRecord { alias, target })
+        .collect();
+    list.sort_by(|a, b| a.alias.cmp(&b.alias));
+    Ok(list)
 }
 
 pub async fn save_admin_alias(alias: &AliasRecord, is_new: bool) -> Result<(), String> {

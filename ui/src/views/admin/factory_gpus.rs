@@ -62,12 +62,24 @@ pub fn AdminFactoryGpusView(toasts: Signal<Vec<Toast>>) -> Element {
 
         let model_val = form_model.read().first().cloned().unwrap_or_default().trim().to_string();
 
+        let price = if factory_type == "runpod" {
+            Some(*form_price.read())
+        } else {
+            None
+        };
+
+        let max_count = if factory_type == "kubernetes" {
+            Some(*form_max_count.read())
+        } else {
+            None
+        };
+
         let payload = FactoryGpuRecord {
             factory_type,
             id,
             memory: *form_memory.read(),
-            price: *form_price.read(),
-            max_count: *form_max_count.read(),
+            price,
+            max_count,
             model: model_val,
         };
 
@@ -178,8 +190,24 @@ pub fn AdminFactoryGpusView(toasts: Signal<Vec<Toast>>) -> Element {
                                     td { GlassBadge { variant: "glow", "{gpu.factory_type}" } }
                                     td { span { class: "font-mono font-bold text-sm", "{gpu.id}" } }
                                     td { span { class: "text-sm", "{gpu.memory} GB" } }
-                                    td { span { class: "text-sm font-mono", "${gpu.price:.2}/hr" } }
-                                    td { span { class: "text-sm", "{gpu.max_count}" } }
+                                    td {
+                                        span {
+                                            class: "text-sm font-mono",
+                                            match gpu.price {
+                                                Some(price) => format!("${price:.2}/hr"),
+                                                None => "-".to_string(),
+                                            }
+                                        }
+                                    }
+                                    td {
+                                        span {
+                                            class: "text-sm",
+                                            match gpu.max_count {
+                                                Some(count) => format!("{count}"),
+                                                None => "-".to_string(),
+                                            }
+                                        }
+                                    }
                                     td {
                                         if !gpu.model.is_empty() {
                                             span { class: "font-mono text-xs", "{gpu.model}" }
@@ -238,7 +266,7 @@ pub fn AdminFactoryGpusView(toasts: Signal<Vec<Toast>>) -> Element {
                         }
 
                         div {
-                            style: "display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem;",
+                            style: "display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem;",
                             div {
                                 class: "form-group",
                                 label { class: "form-label", "VRAM (GB)" }
@@ -251,28 +279,32 @@ pub fn AdminFactoryGpusView(toasts: Signal<Vec<Toast>>) -> Element {
                                     }
                                 }
                             }
-                            div {
-                                class: "form-group",
-                                label { class: "form-label", "Price / Hr ($)" }
-                                input {
-                                    r#type: "number",
-                                    step: "0.01",
-                                    class: "glass-input",
-                                    value: "{form_price.read()}",
-                                    oninput: move |evt| {
-                                        if let Ok(v) = evt.value().parse::<f64>() { form_price.set(v); }
+                            if form_factory.read().as_str() == "runpod" {
+                                div {
+                                    class: "form-group",
+                                    label { class: "form-label", "Price / Hr ($)" }
+                                    input {
+                                        r#type: "number",
+                                        step: "0.01",
+                                        class: "glass-input",
+                                        value: "{form_price.read()}",
+                                        oninput: move |evt| {
+                                            if let Ok(v) = evt.value().parse::<f64>() { form_price.set(v); }
+                                        }
                                     }
                                 }
                             }
-                            div {
-                                class: "form-group",
-                                label { class: "form-label", "Max Count" }
-                                input {
-                                    r#type: "number",
-                                    class: "glass-input",
-                                    value: "{form_max_count.read()}",
-                                    oninput: move |evt| {
-                                        if let Ok(v) = evt.value().parse::<i64>() { form_max_count.set(v); }
+                            if form_factory.read().as_str() == "kubernetes" {
+                                div {
+                                    class: "form-group",
+                                    label { class: "form-label", "Max Count" }
+                                    input {
+                                        r#type: "number",
+                                        class: "glass-input",
+                                        value: "{form_max_count.read()}",
+                                        oninput: move |evt| {
+                                            if let Ok(v) = evt.value().parse::<i64>() { form_max_count.set(v); }
+                                        }
                                     }
                                 }
                             }
