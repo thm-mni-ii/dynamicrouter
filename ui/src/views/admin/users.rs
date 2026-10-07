@@ -9,6 +9,8 @@ use dioxus::prelude::*;
 use std::collections::HashSet;
 use web_sys::window;
 
+const ONE_WEEK_SECS: i64 = 7 * 24 * 60 * 60;
+
 fn load_users_action(
     mut is_loading: Signal<bool>,
     mut users: Signal<Vec<AdminUserRecord>>,
@@ -38,6 +40,7 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
     let mut editing_user = use_signal(|| Option::<(AdminUserRecord, bool)>::None);
     let mut generated_token = use_signal(|| Option::<CreatedTokenResponse>::None);
     let mut copied = use_signal(|| false);
+    let mut show_all_users = use_signal(|| false);
 
     // Form inputs
     let mut form_username = use_signal(String::new);
@@ -186,6 +189,23 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
         }
     };
 
+    let now = (js_sys::Date::now() / 1000.0) as i64;
+    let show_all = *show_all_users.read();
+    let users_list = users.read().clone();
+    let filtered_users: Vec<AdminUserRecord> = users_list
+        .into_iter()
+        .filter(|user| {
+            if show_all {
+                return true;
+            }
+            if let Some(exp) = user.expires_at {
+                exp + ONE_WEEK_SECS >= now
+            } else {
+                true
+            }
+        })
+        .collect();
+
     rsx! {
         div {
             class: "flex flex-col gap-4",
@@ -201,11 +221,23 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                         }
                         p { class: "card-description", "Manage user authorization, admin status, model access restrictions, and generate user API tokens." }
                     }
-                    button {
-                        class: "glass-btn btn-primary",
-                        onclick: open_create_modal,
-                        IconPlus { size: 16 }
-                        span { "Add User" }
+                    div {
+                        class: "flex items-center gap-3",
+                        label {
+                            class: "flex items-center gap-2 cursor-pointer text-sm text-muted select-none",
+                            input {
+                                r#type: "checkbox",
+                                checked: *show_all_users.read(),
+                                onchange: move |evt| show_all_users.set(evt.checked()),
+                            }
+                            span { "Show all users" }
+                        }
+                        button {
+                            class: "glass-btn btn-primary",
+                            onclick: open_create_modal,
+                            IconPlus { size: 16 }
+                            span { "Add User" }
+                        }
                     }
                 }
 
@@ -224,17 +256,23 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                             }
                         }
                         tbody {
-                            if users.read().is_empty() {
+                            if filtered_users.is_empty() {
                                 tr {
                                     td {
                                         colspan: 6,
                                         class: "text-muted",
                                         style: "text-align: center; padding: 2rem;",
-                                        if *is_loading.read() { "Loading users..." } else { "No users registered." }
+                                        if *is_loading.read() {
+                                            "Loading users..."
+                                        } else if users.read().is_empty() {
+                                            "No users registered."
+                                        } else {
+                                            "No active users (expired users older than 1 week are hidden). Check 'Show all users' to view them."
+                                        }
                                     }
                                 }
                             }
-                            for user in users.read().iter() {
+                            for user in filtered_users.iter() {
                                 tr {
                                     key: "{user.username}",
                                     td { span { class: "font-mono font-bold text-sm", "{user.username}" } }
