@@ -1,6 +1,6 @@
 use crate::auth::extractor::extract_client_ip;
 use crate::db::alias::resolve_alias;
-use crate::db::model::get_model_config;
+use crate::db::model::{get_exact_model_config, get_model_config};
 use crate::db::openai_api::get_all_openai_apis;
 use crate::db::user::{
     User, UserToken, get_user_and_token_by_token_hash, get_user_by_token_hash,
@@ -339,7 +339,14 @@ async fn extract_models(
 
         let matches_openai = openai_apis.iter().any(|api| api.matches_model(&model_str));
 
-        let model_conf = get_model_config(&model_str).await.unwrap_or(None);
+        let exact_model_conf = get_exact_model_config(&model_str).await.unwrap_or(None);
+        let model_conf = if exact_model_conf.is_some() {
+            exact_model_conf
+        } else if matches_openai {
+            None
+        } else {
+            get_model_config(&model_str).await.unwrap_or(None)
+        };
 
         // 1. Check user model limits
         let user_allowed = authorization

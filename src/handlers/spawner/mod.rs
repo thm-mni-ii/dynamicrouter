@@ -108,7 +108,11 @@ impl Handler for SpawnerHandler {
 
         let lock = self.get_lock(&model_name).await;
         let _lock_guard = lock.lock().await;
-        let instances = get_instances_for(&model_name).await?;
+        let instances: Vec<Instance> = get_instances_for(&model_name)
+            .await?
+            .into_iter()
+            .filter(|inst| !inst.data.is_empty())
+            .collect();
         let requests = count_pending_requests_for(&model_name).await?;
         let request_count = requests as u32;
         let mut instance_count = instances.len() as u32;

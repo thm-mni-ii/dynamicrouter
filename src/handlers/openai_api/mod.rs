@@ -1,6 +1,8 @@
 use crate::config::CONFIG;
 use crate::db::instance::ensure_instance_exists;
-use crate::db::model::{ModelHandlerConfig, OpenAiHandlerConfig, get_model_config};
+use crate::db::model::{
+    ModelHandlerConfig, OpenAiHandlerConfig, get_exact_model_config, get_model_config,
+};
 use crate::db::openai_api::{OpenAiApiRecord, get_all_openai_apis, get_openai_api};
 use crate::db::request::{create_request, request_done};
 use crate::handlers::{DynHandler, GenerationType, Handler};
@@ -37,7 +39,7 @@ impl OpenaiHandler {
         let model_str = model.to_string();
 
         // 1. Check if model explicitly configured in DB models
-        if let Some(model_conf) = get_model_config(&model_str).await?
+        if let Some(model_conf) = get_exact_model_config(&model_str).await?
             && let ModelHandlerConfig::OpenAi(ref openai_conf) = model_conf.handler
         {
             return Self::resolve_from_model_handler(model, openai_conf).await;
@@ -59,7 +61,14 @@ impl OpenaiHandler {
             }
         }
 
-        // 3. If only one API is configured in openai_apis, use it as fallback
+        // 3. Match against glob pattern models or wildcard '*' model in DB models
+        if let Some(model_conf) = get_model_config(&model_str).await?
+            && let ModelHandlerConfig::OpenAi(ref openai_conf) = model_conf.handler
+        {
+            return Self::resolve_from_model_handler(model, openai_conf).await;
+        }
+
+        // 4. If only one API is configured in openai_apis, use it as fallback
         if openai_apis.len() == 1 {
             let api_conf = openai_apis.into_iter().next().unwrap();
             let target_model = api_conf.map_model_name(&model_str);

@@ -1,4 +1,4 @@
-use crate::db::model::{ModelHandlerConfig, get_model_config};
+use crate::db::model::{ModelHandlerConfig, get_exact_model_config, get_model_config};
 use crate::db::openai_api::get_all_openai_apis;
 use crate::handlers::openai_api::OpenaiHandler;
 use crate::handlers::spawner::SpawnerHandler;
@@ -16,11 +16,10 @@ pub mod spawner;
 static RH: OnceCell<RoutingHandler> = OnceCell::new();
 
 pub async fn init_handlers() {
-    let rh = RoutingHandler::new().await;
-    assert!(
-        RH.set(rh).is_ok(),
-        "init_handlers should only be called once"
-    );
+    if RH.get().is_none() {
+        let rh = RoutingHandler::new().await;
+        let _ = RH.set(rh);
+    }
 }
 
 pub fn get_handler() -> &'static RoutingHandler {
@@ -78,6 +77,58 @@ impl Handler for RoutingHandler {
     ) -> Result<ModelResponse, Error> {
         let model_str = model.to_string();
 
+        // 1. Check if model is explicitly configured in DB models
+        if let Some(model_conf) = get_exact_model_config(&model_str).await? {
+            return match &model_conf.handler {
+                ModelHandlerConfig::Spawner(_) => {
+                    self.spawner_handler
+                        .generate(
+                            generation_type,
+                            model,
+                            request,
+                            username,
+                            user_log_request_body,
+                            prompt_tokens,
+                            token_hash,
+                        )
+                        .await
+                }
+                ModelHandlerConfig::OpenAi(_) => {
+                    self.openai_handler
+                        .generate(
+                            generation_type,
+                            model,
+                            request,
+                            username,
+                            user_log_request_body,
+                            prompt_tokens,
+                            token_hash,
+                        )
+                        .await
+                }
+            };
+        }
+
+        // 2. Match against configured openai_apis by prefix or explicit models list
+        let openai_apis = get_all_openai_apis().await?;
+        for api_conf in &openai_apis {
+            if api_conf.matches_model(&model_str) {
+                return self
+                    .openai_handler
+                    .generate(
+                        generation_type,
+                        model,
+                        request,
+                        username,
+                        user_log_request_body,
+                        prompt_tokens,
+                        token_hash,
+                    )
+                    .await;
+            }
+        }
+
+        // 3. Match against glob pattern models or wildcard '*' model in models table
         if let Some(model_conf) = get_model_config(&model_str).await? {
             return match &model_conf.handler {
                 ModelHandlerConfig::Spawner(_) => {
@@ -109,22 +160,20 @@ impl Handler for RoutingHandler {
             };
         }
 
-        let openai_apis = get_all_openai_apis().await?;
-        for api_conf in openai_apis {
-            if api_conf.matches_model(&model_str) {
-                return self
-                    .openai_handler
-                    .generate(
-                        generation_type,
-                        model,
-                        request,
-                        username,
-                        user_log_request_body,
-                        prompt_tokens,
-                        token_hash,
-                    )
-                    .await;
-            }
+        // 4. Fallback if single openai API is configured
+        if openai_apis.len() == 1 {
+            return self
+                .openai_handler
+                .generate(
+                    generation_type,
+                    model,
+                    request,
+                    username,
+                    user_log_request_body,
+                    prompt_tokens,
+                    token_hash,
+                )
+                .await;
         }
 
         anyhow::bail!("Model '{model_str}' not found")
