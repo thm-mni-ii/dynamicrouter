@@ -212,7 +212,7 @@ pub struct RequestLog {
     pub response_body: Option<serde_json::Value>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PaginatedRequests {
     pub requests: Vec<RequestLog>,
     pub total: i64,

@@ -9,6 +9,13 @@ use crate::models::{PaginatedRequests, RequestLog};
 use crate::state::Toast;
 use dioxus::prelude::*;
 
+fn format_timestamp(ts: i64) -> String {
+    let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64((ts * 1000) as f64));
+    date.to_locale_string("en-US", &wasm_bindgen::JsValue::UNDEFINED)
+        .as_string()
+        .unwrap_or_else(|| format!("{ts}"))
+}
+
 fn load_system_logs_action(
     mut is_loading: Signal<bool>,
     mut logs_data: Signal<Option<PaginatedRequests>>,
@@ -187,7 +194,7 @@ pub fn AdminSystemLogsView(toasts: Signal<Vec<Toast>>) -> Element {
                                         td { span { class: "font-mono text-xs", "{req.id}" } }
                                         td { span { class: "font-mono font-bold text-xs", "{req.user.as_deref().unwrap_or(\"Anonymous\")}" } }
                                         td { span { class: "font-bold text-sm", "{req.model}" } }
-                                        td { span { class: "text-xs text-muted", "{req.enqueue}" } }
+                                        td { span { class: "text-xs text-muted", "{format_timestamp(req.enqueue)}" } }
                                         td {
                                             span { class: "text-sm",
                                                 if let Some(done) = req.done {

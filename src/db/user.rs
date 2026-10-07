@@ -145,7 +145,13 @@ pub async fn add_user_token(token_hash: &str, username: &str) -> Result<(), anyh
     Ok(())
 }
 
-pub async fn get_user_tokens(username: &str) -> Result<Vec<String>, anyhow::Error> {
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UserToken {
+    pub token_hash: String,
+    pub created_at: Option<String>,
+}
+
+pub async fn get_user_tokens(username: &str) -> Result<Vec<UserToken>, anyhow::Error> {
     let rows = sqlx::query_scalar::<_, String>(
         "SELECT token_hash FROM user_tokens WHERE username = ? ORDER BY token_hash",
     )
@@ -153,7 +159,13 @@ pub async fn get_user_tokens(username: &str) -> Result<Vec<String>, anyhow::Erro
     .fetch_all(get_executor())
     .await?;
 
-    Ok(rows)
+    Ok(rows
+        .into_iter()
+        .map(|token_hash| UserToken {
+            token_hash,
+            created_at: None,
+        })
+        .collect())
 }
 
 pub fn hash_token(raw_token: &str) -> String {

@@ -143,7 +143,7 @@ pub fn TokensView(toasts: Signal<Vec<Toast>>) -> Element {
                                         span { class: "font-mono text-sm", "{token.token_hash}" }
                                     }
                                     td {
-                                        span { class: "text-muted text-sm", "{token.created_at.as_deref().unwrap_or(\"N/A\")}" }
+                                        span { class: "text-muted text-sm", "{token.created_at.as_deref().unwrap_or(\"—\")}" }
                                     }
                                     td {
                                         class: "text-right",

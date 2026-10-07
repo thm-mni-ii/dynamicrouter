@@ -367,8 +367,13 @@ pub async fn delete_user_token(token_hash: &str) -> Result<(), String> {
 // --------------------------------------------------------------------------
 // User Logs & Metrics
 // --------------------------------------------------------------------------
-pub async fn fetch_user_logs(model: Option<&str>, limit: Option<i64>) -> Result<PaginatedRequests, String> {
-    let mut url = format!("{}/api/me/logs?limit={}", get_origin(), limit.unwrap_or(50));
+pub async fn fetch_user_logs(model: Option<&str>, page: Option<i64>, page_size: Option<i64>) -> Result<PaginatedRequests, String> {
+    let mut url = format!(
+        "{}/api/me/logs?page={}&page_size={}&include_bodies=true",
+        get_origin(),
+        page.unwrap_or(1),
+        page_size.unwrap_or(50)
+    );
     if let Some(m) = model {
         if !m.is_empty() {
             url.push_str(&format!("&model={m}"));
@@ -923,9 +928,10 @@ pub async fn fetch_admin_system_logs(
     page: Option<i64>,
     page_size: Option<i64>,
 ) -> Result<PaginatedRequests, String> {
-    let mut url = format!("{}/api/logs/requests?page={}&page_size={}", 
-        get_origin(), 
-        page.unwrap_or(1), 
+    let mut url = format!(
+        "{}/api/logs/requests?page={}&page_size={}&include_bodies=true",
+        get_origin(),
+        page.unwrap_or(1),
         page_size.unwrap_or(50)
     );
     if let Some(u) = user {

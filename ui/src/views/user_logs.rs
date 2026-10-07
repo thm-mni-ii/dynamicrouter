@@ -6,6 +6,13 @@ use crate::components::{
 use crate::models::{PaginatedRequests, RequestLog};
 use dioxus::prelude::*;
 
+fn format_timestamp(ts: i64) -> String {
+    let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64((ts * 1000) as f64));
+    date.to_locale_string("en-US", &wasm_bindgen::JsValue::UNDEFINED)
+        .as_string()
+        .unwrap_or_else(|| format!("{ts}"))
+}
+
 fn load_user_logs_action(
     mut is_loading: Signal<bool>,
     mut logs_data: Signal<Option<PaginatedRequests>>,
@@ -16,7 +23,7 @@ fn load_user_logs_action(
     let model_param = if m.trim().is_empty() { None } else { Some(m) };
 
     spawn(async move {
-        match fetch_user_logs(model_param.as_deref(), Some(50)).await {
+        match fetch_user_logs(model_param.as_deref(), Some(1), Some(50)).await {
             Ok(data) => logs_data.set(Some(data)),
             Err(_) => logs_data.set(None),
         }
@@ -115,7 +122,7 @@ pub fn UserLogsView() -> Element {
                                             span { class: "text-sm font-bold", "{req.model}" }
                                         }
                                         td {
-                                            span { class: "text-xs text-muted", "{req.enqueue}" }
+                                            span { class: "text-xs text-muted", "{format_timestamp(req.enqueue)}" }
                                         }
                                         td {
                                             span { class: "text-sm", 

@@ -29,17 +29,29 @@ pub struct RequestFilter {
     pub status: Option<String>,
     pub from: Option<i64>,
     pub to: Option<i64>,
-    pub limit: Option<u32>,
-    pub offset: Option<u32>,
+    pub page: Option<i64>,
+    pub page_size: Option<i64>,
     pub include_bodies: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RequestLog {
+    pub id: String,
+    pub model: String,
+    pub enqueue: i64,
+    pub done: Option<i64>,
+    pub user: Option<String>,
+    pub instance: Option<String>,
+    pub request_body: Option<serde_json::Value>,
+    pub response_body: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PaginatedRequests {
-    pub items: Vec<Request>,
+    pub requests: Vec<RequestLog>,
     pub total: i64,
-    pub limit: u32,
-    pub offset: u32,
+    pub page: i64,
+    pub page_size: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -203,8 +215,9 @@ pub async fn get_request_by_id(id: &str) -> Result<Option<Request>, anyhow::Erro
 }
 
 pub async fn get_requests(filter: &RequestFilter) -> Result<PaginatedRequests, anyhow::Error> {
-    let limit = filter.limit.unwrap_or(50).clamp(1, 1000);
-    let offset = filter.offset.unwrap_or(0);
+    let page = filter.page.unwrap_or(1).max(1);
+    let page_size = filter.page_size.unwrap_or(50).clamp(1, 1000);
+    let offset = (page - 1) * page_size;
     let include_bodies = filter.include_bodies.unwrap_or(false);
 
     let mut where_clauses = Vec::new();
@@ -251,18 +264,48 @@ pub async fn get_requests(filter: &RequestFilter) -> Result<PaginatedRequests, a
     };
 
     let data_query = format!(
-        "SELECT {select_columns} FROM request{where_str} ORDER BY enqueue DESC LIMIT {limit} OFFSET {offset}"
+        "SELECT {select_columns} FROM request{where_str} ORDER BY enqueue DESC LIMIT {page_size} OFFSET {offset}"
     );
 
     let items = sqlx::query_as::<_, Request>(&data_query)
         .fetch_all(get_executor())
         .await?;
 
+    let requests = items
+        .into_iter()
+        .map(|r| {
+            let request_body = r.request_body.and_then(|text| {
+                if text.trim().is_empty() {
+                    None
+                } else {
+                    Some(serde_json::from_str(&text).unwrap_or_else(|_| serde_json::Value::String(text)))
+                }
+            });
+            let response_body = r.response_body.and_then(|text| {
+                if text.trim().is_empty() {
+                    None
+                } else {
+                    Some(serde_json::from_str(&text).unwrap_or_else(|_| serde_json::Value::String(text)))
+                }
+            });
+            RequestLog {
+                id: r.id,
+                model: r.model,
+                enqueue: r.enqueue,
+                done: r.done,
+                user: r.user,
+                instance: Some(r.instance),
+                request_body,
+                response_body,
+            }
+        })
+        .collect();
+
     Ok(PaginatedRequests {
-        items,
+        requests,
         total,
-        limit,
-        offset,
+        page,
+        page_size,
     })
 }
 
