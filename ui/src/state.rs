@@ -7,6 +7,7 @@ use web_sys::window;
 pub enum ActiveTab {
     // User Tabs
     Chat,
+    UserModels,
     Tokens,
     UserLogs,
     UserMetrics,
@@ -46,6 +47,7 @@ impl fmt::Display for ActiveTab {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Chat => write!(f, "Chat Playground"),
+            Self::UserModels => write!(f, "Models"),
             Self::Tokens => write!(f, "API Tokens"),
             Self::UserLogs => write!(f, "My Logs"),
             Self::UserMetrics => write!(f, "My Metrics"),
@@ -70,6 +72,7 @@ pub fn tab_from_path(path: &str) -> ActiveTab {
     let clean = path.trim_matches('/');
     match clean {
         "" | "chat" => ActiveTab::Chat,
+        "models" | "user-models" | "user_models" => ActiveTab::UserModels,
         "tokens" => ActiveTab::Tokens,
         "logs" | "user-logs" | "user_logs" => ActiveTab::UserLogs,
         "metrics" | "user-metrics" | "user_metrics" => ActiveTab::UserMetrics,
@@ -90,6 +93,7 @@ pub fn tab_from_path(path: &str) -> ActiveTab {
 pub fn path_for_tab(tab: ActiveTab) -> &'static str {
     match tab {
         ActiveTab::Chat => "/chat",
+        ActiveTab::UserModels => "/models",
         ActiveTab::Tokens => "/tokens",
         ActiveTab::UserLogs => "/logs",
         ActiveTab::UserMetrics => "/metrics",

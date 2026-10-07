@@ -558,3 +558,189 @@ pub async fn get_timeseries_metrics(
         })
         .collect())
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModelLiveStats {
+    pub total_queue_length: i64,
+    pub user_queue_length: i64,
+    pub total_output_tps: f64,
+    pub user_output_tps: f64,
+    pub user_tps_share_pct: f64,
+    pub avg_duration_secs: Option<f64>,
+    pub user_total_requests: i64,
+    pub user_total_tokens: i64,
+    pub active_instances: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct PendingRow {
+    model: String,
+    total_pending: i64,
+    user_pending: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct WindowTokensRow {
+    model: String,
+    total_completion_tokens: i64,
+    user_completion_tokens: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct AvgDurationRow {
+    model: String,
+    avg_duration: Option<f64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct UserLifetimeRow {
+    model: String,
+    user_requests: i64,
+    user_tokens: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct InstanceCountRow {
+    model: String,
+    instance_count: i64,
+}
+
+pub async fn get_batch_models_live_stats(
+    model_ids: &[String],
+    username: &str,
+    window_secs: i64,
+) -> Result<std::collections::HashMap<String, ModelLiveStats>, anyhow::Error> {
+    let now = Utc::now().timestamp();
+    let window_start = now - window_secs.max(10);
+    let avg_window_start = now - 3600; // last 1 hour for average duration
+
+    let mut result: std::collections::HashMap<String, ModelLiveStats> = model_ids
+        .iter()
+        .map(|id| (id.clone(), ModelLiveStats::default()))
+        .collect();
+
+    // 1. Pending queues
+    let pending_rows = sqlx::query_as::<_, PendingRow>(
+        r"
+        SELECT
+            model,
+            COUNT(DISTINCT id) AS total_pending,
+            COALESCE(SUM(CASE WHEN user = ? THEN 1 ELSE 0 END), 0) AS user_pending
+        FROM request
+        WHERE done IS NULL
+        GROUP BY model
+        ",
+    )
+    .bind(username)
+    .fetch_all(get_executor())
+    .await
+    .unwrap_or_default();
+
+    for row in pending_rows {
+        if let Some(stats) = result.get_mut(&row.model) {
+            stats.total_queue_length = row.total_pending;
+            stats.user_queue_length = row.user_pending;
+        }
+    }
+
+    // 2. Window tokens
+    let token_rows = sqlx::query_as::<_, WindowTokensRow>(
+        r"
+        SELECT
+            model,
+            COALESCE(SUM(completion_tokens), 0) AS total_completion_tokens,
+            COALESCE(SUM(CASE WHEN user = ? THEN completion_tokens ELSE 0 END), 0) AS user_completion_tokens
+        FROM request
+        WHERE done IS NOT NULL AND done >= ?
+        GROUP BY model
+        ",
+    )
+    .bind(username)
+    .bind(window_start)
+    .fetch_all(get_executor())
+    .await
+    .unwrap_or_default();
+
+    for row in token_rows {
+        if let Some(stats) = result.get_mut(&row.model) {
+            let win_f = window_secs.max(1) as f64;
+            let total_tps = (row.total_completion_tokens as f64) / win_f;
+            let user_tps = (row.user_completion_tokens as f64) / win_f;
+            stats.total_output_tps = (total_tps * 100.0).round() / 100.0;
+            stats.user_output_tps = (user_tps * 100.0).round() / 100.0;
+            stats.user_tps_share_pct = if total_tps > 0.0 {
+                ((user_tps / total_tps) * 1000.0).round() / 10.0
+            } else {
+                0.0
+            };
+        }
+    }
+
+    // 3. Avg duration (last 1h)
+    let avg_rows = sqlx::query_as::<_, AvgDurationRow>(
+        r"
+        SELECT
+            model,
+            AVG(done - enqueue) AS avg_duration
+        FROM request
+        WHERE done IS NOT NULL AND done >= enqueue AND enqueue >= ?
+        GROUP BY model
+        ",
+    )
+    .bind(avg_window_start)
+    .fetch_all(get_executor())
+    .await
+    .unwrap_or_default();
+
+    for row in avg_rows {
+        if let Some(stats) = result.get_mut(&row.model) {
+            stats.avg_duration_secs = row.avg_duration;
+        }
+    }
+
+    // 4. User lifetime requests and tokens
+    let user_rows = sqlx::query_as::<_, UserLifetimeRow>(
+        r"
+        SELECT
+            model,
+            COUNT(*) AS user_requests,
+            COALESCE(SUM(total_tokens), 0) AS user_tokens
+        FROM request
+        WHERE user = ?
+        GROUP BY model
+        ",
+    )
+    .bind(username)
+    .fetch_all(get_executor())
+    .await
+    .unwrap_or_default();
+
+    for row in user_rows {
+        if let Some(stats) = result.get_mut(&row.model) {
+            stats.user_total_requests = row.user_requests;
+            stats.user_total_tokens = row.user_tokens;
+        }
+    }
+
+    // 5. Active instances
+    let inst_rows = sqlx::query_as::<_, InstanceCountRow>(
+        r"
+        SELECT
+            model,
+            COUNT(*) AS instance_count
+        FROM instance
+        GROUP BY model
+        ",
+    )
+    .fetch_all(get_executor())
+    .await
+    .unwrap_or_default();
+
+    for row in inst_rows {
+        if let Some(stats) = result.get_mut(&row.model) {
+            stats.active_instances = row.instance_count;
+        }
+    }
+
+    Ok(result)
+}

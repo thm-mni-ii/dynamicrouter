@@ -65,6 +65,15 @@ pub fn Navbar(
                         span { "Chat" }
                     }
                     button {
+                        class: if *active_tab.read() == ActiveTab::UserModels { "nav-tab active" } else { "nav-tab" },
+                        onclick: move |_| {
+                            active_tab.set(ActiveTab::UserModels);
+                            show_admin_menu.set(false);
+                        },
+                        IconBot { size: 16 }
+                        span { "Models" }
+                    }
+                    button {
                         class: if *active_tab.read() == ActiveTab::Tokens { "nav-tab active" } else { "nav-tab" },
                         onclick: move |_| {
                             active_tab.set(ActiveTab::Tokens);

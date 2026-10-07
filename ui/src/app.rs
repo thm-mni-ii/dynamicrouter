@@ -129,6 +129,7 @@ pub fn App() -> Element {
                     // Full App for Authenticated Users / Admins
                     match *active_tab.read() {
                         ActiveTab::Chat => rsx! { ChatView {} },
+                        ActiveTab::UserModels => rsx! { UserModelsView { active_tab } },
                         ActiveTab::Tokens => rsx! { TokensView { toasts } },
                         ActiveTab::UserLogs => rsx! { UserLogsView {} },
                         ActiveTab::UserMetrics => rsx! { UserMetricsView {} },

@@ -59,6 +59,35 @@ pub struct ModelsListResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct UserModelStatus {
+    pub id: String,
+    pub name: String,
+    pub handler_type: String,
+    pub status: String,
+    pub active_instances: i64,
+    pub min_scale: Option<u32>,
+    pub max_scale: Option<u32>,
+    pub queue_length_for_scale_up: Option<u32>,
+    pub timeout: Option<u32>,
+    pub total_queue_length: i64,
+    pub user_queue_length: i64,
+    pub total_output_tps: f64,
+    pub user_output_tps: f64,
+    pub user_tps_share_pct: f64,
+    pub avg_duration_secs: Option<f64>,
+    pub ctx_length: Option<u64>,
+    pub aliases: Vec<String>,
+    pub user_total_requests: i64,
+    pub user_total_tokens: i64,
+    pub rate_limits: Vec<RateLimitUsage>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UserModelsResponse {
+    pub models: Vec<UserModelStatus>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SpawnerConfig {
     pub backends: Option<HashSet<String>>,
     pub min_scale: u32,

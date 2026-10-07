@@ -632,6 +632,14 @@ pub async fn fetch_my_rate_limits() -> Result<Vec<RateLimitUsage>, String> {
     Ok(wrapper.rate_limits)
 }
 
+pub async fn fetch_my_models() -> Result<Vec<UserModelStatus>, String> {
+    let url = format!("{}/api/me/models", get_origin());
+    let req = apply_auth(client().get(&url));
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    let wrapper = handle_json_response::<crate::models::UserModelsResponse>(res).await?;
+    Ok(wrapper.models)
+}
+
 pub async fn save_admin_rate_limit(rule: &RateLimitRecord, is_new: bool) -> Result<(), String> {
     let url = if is_new {
         format!("{}/api/rate-limits", get_origin())

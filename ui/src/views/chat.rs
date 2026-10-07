@@ -1,7 +1,7 @@
-use crate::api::{fetch_v1_models, send_chat_completion};
+use crate::api::{fetch_my_models, send_chat_completion};
 use crate::components::icons::*;
 use crate::components::{GlassBadge, GlassCard};
-use crate::models::{ChatCompletionRequest, ChatMessage, ModelListItem};
+use crate::models::{ChatCompletionRequest, ChatMessage, UserModelStatus};
 use dioxus::prelude::*;
 
 fn send_chat_action(
@@ -68,7 +68,7 @@ fn send_chat_action(
 
 #[component]
 pub fn ChatView() -> Element {
-    let mut models = use_signal(Vec::<ModelListItem>::new);
+    let mut models = use_signal(Vec::<UserModelStatus>::new);
     let mut selected_model = use_signal(String::new);
     let mut system_prompt = use_signal(|| "You are a helpful, brilliant AI assistant powered by DynamicRouter.".to_string());
     let mut user_input = use_signal(String::new);
@@ -78,9 +78,9 @@ pub fn ChatView() -> Element {
     let mut temperature = use_signal(|| 0.7f32);
     let mut show_system_drawer = use_signal(|| false);
 
-    // Fetch models on mount
+    // Fetch rich models on mount
     let _ = use_resource(move || async move {
-        match fetch_v1_models().await {
+        match fetch_my_models().await {
             Ok(list) => {
                 if !list.is_empty() && selected_model.read().is_empty() {
                     selected_model.set(list[0].id.clone());
@@ -92,6 +92,13 @@ pub fn ChatView() -> Element {
             }
         }
     });
+
+    let current_selected_id = selected_model.read().clone();
+    let active_model_info = models
+        .read()
+        .iter()
+        .find(|m| m.id == current_selected_id)
+        .cloned();
 
     rsx! {
         div {
@@ -127,8 +134,64 @@ pub fn ChatView() -> Element {
                             }
                         }
 
+                        // Selected Model Live Status Badge & Telemetry
+                        if let Some(info) = active_model_info {
+                            div {
+                                class: "model-telemetry-panel",
+                                
+                                div {
+                                    class: "model-telemetry-header",
+                                    span { class: "model-telemetry-title", "Status" }
+                                    if info.status == "running" {
+                                        GlassBadge {
+                                            variant: "glow",
+                                            "🟢 Ready ({info.active_instances} active)"
+                                        }
+                                    } else if info.status == "upstream" {
+                                        GlassBadge {
+                                            variant: "primary",
+                                            "🟣 Cloud Upstream"
+                                        }
+                                    } else {
+                                        GlassBadge {
+                                            variant: "secondary",
+                                            "⚪ Cold Start Needed"
+                                        }
+                                    }
+                                }
+
+                                div {
+                                    class: "model-telemetry-grid",
+                                    div {
+                                        class: "model-telemetry-item",
+                                        span { class: "model-telemetry-label", "Queue Depth" }
+                                        span {
+                                            class: "model-telemetry-value",
+                                            "{info.total_queue_length}"
+                                            if info.user_queue_length > 0 {
+                                                " ({info.user_queue_length} you)"
+                                            }
+                                        }
+                                    }
+                                    div {
+                                        class: "model-telemetry-item",
+                                        span { class: "model-telemetry-label", "Throughput" }
+                                        span { class: "model-telemetry-value text-primary", "{info.total_output_tps:.1} tp/s" }
+                                    }
+                                }
+
+                                if info.status == "idle" {
+                                    div {
+                                        class: "model-telemetry-notice",
+                                        IconClock { size: 14 }
+                                        span { "First prompt boots container (this will take a while)" }
+                                    }
+                                }
+                            }
+                        }
+
                         div {
-                            class: "form-group",
+                            class: "form-group mt-2",
                             div {
                                 class: "flex items-center justify-between",
                                 label { class: "form-label", "System Prompt" }
