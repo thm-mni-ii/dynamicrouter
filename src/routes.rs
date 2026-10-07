@@ -1,7 +1,11 @@
+use crate::auth::extractor::extract_client_ip;
 use crate::db::alias::resolve_alias;
 use crate::db::model::get_model_config;
 use crate::db::openai_api::get_all_openai_apis;
-use crate::db::user::{User, get_user_by_token_hash};
+use crate::db::user::{
+    User, UserToken, get_user_and_token_by_token_hash, get_user_by_token_hash,
+    hash_token, normalize_token_secret,
+};
 use crate::handlers::{GenerationType, Handler, get_handler};
 use crate::utils::ModelRef;
 use axum::Json;
@@ -11,7 +15,6 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use log::{debug, error, warn};
 use serde_json::{Value, json};
-use sha2::Digest;
 
 pub async fn completions(
     authorization: Authorization,
@@ -44,11 +47,19 @@ pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusC
         {
             continue;
         }
+        // User account model restrictions
         if let Some(limit_to) = &authorization.user.limit_to_models
             && !limit_to.contains(&model.id)
         {
             continue;
         }
+        // Token model restrictions
+        if let Some(token_limit_to) = authorization.token.as_ref().and_then(|t| t.limit_to_models.as_ref())
+            && !token_limit_to.contains(&model.id)
+        {
+            continue;
+        }
+
         if seen_models.insert(model.id.clone()) {
             models.push(json!({"id": model.id, "name": model.name.as_ref().unwrap_or(&model.id)}));
         }
@@ -75,6 +86,13 @@ pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusC
                     continue;
                 }
 
+                if let Some(token_limit_to) = authorization.token.as_ref().and_then(|t| t.limit_to_models.as_ref())
+                    && !token_limit_to.contains(&full_id)
+                    && !token_limit_to.contains(m)
+                {
+                    continue;
+                }
+
                 if seen_models.insert(full_id.clone()) {
                     models.push(json!({"id": full_id, "name": full_id}));
                 }
@@ -89,13 +107,18 @@ pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusC
 
 #[derive(Debug, Clone)]
 pub enum TokenAuthResult {
-    Valid(User),
-    Expired(String),
+    Valid { user: User, token: Option<UserToken> },
+    UserExpired(String),
+    TokenExpired(String),
+    IpForbidden(String),
     Invalid,
 }
 
-pub async fn check_token_auth(token: &str) -> TokenAuthResult {
-    if let Some(session) = crate::auth::session::SESSIONS.get_session(token).await {
+pub async fn check_token_auth_with_ip(
+    raw_token: &str,
+    client_ip: Option<std::net::IpAddr>,
+) -> TokenAuthResult {
+    if let Some(session) = crate::auth::session::SESSIONS.get_session(raw_token).await {
         let is_admin = session.is_admin
             || crate::config::CONFIG.is_user_admin_by_config(&session.username)
             || session
@@ -105,46 +128,89 @@ pub async fn check_token_auth(token: &str) -> TokenAuthResult {
 
         if let Ok(Some(mut user)) = crate::db::user::get_user_by_username(&session.username).await {
             if user.is_expired() {
-                return TokenAuthResult::Expired(user.username);
+                return TokenAuthResult::UserExpired(user.username);
             }
             user.is_admin = user.is_admin || is_admin;
-            return TokenAuthResult::Valid(user);
+            return TokenAuthResult::Valid { user, token: None };
         }
-        return TokenAuthResult::Valid(User {
-            username: session.username,
-            limit_to_models: None,
-            log_request_body: None,
-            is_admin,
-            expires_at: None,
-        });
+        return TokenAuthResult::Valid {
+            user: User {
+                username: session.username,
+                limit_to_models: None,
+                log_request_body: None,
+                is_admin,
+                expires_at: None,
+            },
+            token: None,
+        };
     }
 
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(token.as_bytes());
-    let hash = hex::encode(hasher.finalize());
-
-    if let Ok(Some(mut user)) = get_user_by_token_hash(&hash).await {
+    // 1. Check normalized bearer token hash in DB
+    let token_hash = hash_token(raw_token);
+    if let Ok(Some((mut user, user_token))) = get_user_and_token_by_token_hash(&token_hash).await {
         if user.is_expired() {
-            return TokenAuthResult::Expired(user.username);
+            return TokenAuthResult::UserExpired(user.username);
+        }
+        if user_token.is_expired() {
+            return TokenAuthResult::TokenExpired(
+                user_token.name.clone().unwrap_or_else(|| user_token.preview_display()),
+            );
+        }
+        if !user_token.is_ip_allowed(client_ip) {
+            return TokenAuthResult::IpForbidden(format!(
+                "Client IP {:?} is not allowed for this token",
+                client_ip
+            ));
         }
         user.is_admin = user.is_admin || crate::config::CONFIG.is_user_admin_by_config(&user.username);
-        return TokenAuthResult::Valid(user);
+        return TokenAuthResult::Valid {
+            user,
+            token: Some(user_token),
+        };
     }
 
-    if let Ok(Some(mut user)) = get_user_by_token_hash(token).await {
+    // 2. Check unhashed / legacy token in DB
+    let normalized = normalize_token_secret(raw_token);
+    if let Ok(Some((mut user, user_token))) = get_user_and_token_by_token_hash(normalized).await {
         if user.is_expired() {
-            return TokenAuthResult::Expired(user.username);
+            return TokenAuthResult::UserExpired(user.username);
+        }
+        if user_token.is_expired() {
+            return TokenAuthResult::TokenExpired(
+                user_token.name.clone().unwrap_or_else(|| user_token.preview_display()),
+            );
+        }
+        if !user_token.is_ip_allowed(client_ip) {
+            return TokenAuthResult::IpForbidden(format!(
+                "Client IP {:?} is not allowed for this token",
+                client_ip
+            ));
         }
         user.is_admin = user.is_admin || crate::config::CONFIG.is_user_admin_by_config(&user.username);
-        return TokenAuthResult::Valid(user);
+        return TokenAuthResult::Valid {
+            user,
+            token: Some(user_token),
+        };
+    }
+
+    if let Ok(Some(mut user)) = get_user_by_token_hash(raw_token).await {
+        if user.is_expired() {
+            return TokenAuthResult::UserExpired(user.username);
+        }
+        user.is_admin = user.is_admin || crate::config::CONFIG.is_user_admin_by_config(&user.username);
+        return TokenAuthResult::Valid { user, token: None };
     }
 
     TokenAuthResult::Invalid
 }
 
+pub async fn check_token_auth(token: &str) -> TokenAuthResult {
+    check_token_auth_with_ip(token, None).await
+}
+
 pub async fn check_token(token: &str) -> Option<User> {
     match check_token_auth(token).await {
-        TokenAuthResult::Valid(u) => Some(u),
+        TokenAuthResult::Valid { user, .. } => Some(user),
         _ => None,
     }
 }
@@ -152,6 +218,7 @@ pub async fn check_token(token: &str) -> Option<User> {
 pub struct Authorization {
     pub username: String,
     pub user: User,
+    pub token: Option<UserToken>,
 }
 
 #[derive(Debug, Clone)]
@@ -201,15 +268,29 @@ impl<S: Send + Sync> FromRequestParts<S> for Authorization {
             .and_then(|h| h.strip_prefix("Bearer "))
             .ok_or_else(|| AuthRejection::Unauthorized("Missing or invalid authorization header".to_string()))?;
 
-        match check_token_auth(token).await {
-            TokenAuthResult::Valid(user) => {
+        let client_ip = extract_client_ip(parts);
+
+        match check_token_auth_with_ip(token, client_ip).await {
+            TokenAuthResult::Valid { user, token: tok } => {
                 let username = user.username.clone();
-                Ok(Authorization { username, user })
+                Ok(Authorization {
+                    username,
+                    user,
+                    token: tok,
+                })
             }
-            TokenAuthResult::Expired(username) => {
+            TokenAuthResult::UserExpired(username) => {
                 Err(AuthRejection::Forbidden(format!(
                     "User account '{username}' has expired"
                 )))
+            }
+            TokenAuthResult::TokenExpired(ident) => {
+                Err(AuthRejection::Forbidden(format!(
+                    "API token '{ident}' has expired"
+                )))
+            }
+            TokenAuthResult::IpForbidden(msg) => {
+                Err(AuthRejection::Forbidden(msg))
             }
             TokenAuthResult::Invalid => {
                 Err(AuthRejection::Unauthorized("Invalid authorization token".to_string()))
@@ -255,31 +336,38 @@ async fn extract_models(
 
         let model_conf = get_model_config(&model_str).await.unwrap_or(None);
 
+        // 1. Check user model limits
+        let user_allowed = authorization
+            .user
+            .limit_to_models
+            .as_ref()
+            .is_none_or(|limited| limited.contains(&model_str));
+
+        // 2. Check token model limits
+        let token_allowed = authorization
+            .token
+            .as_ref()
+            .and_then(|t| t.limit_to_models.as_ref())
+            .is_none_or(|limited| limited.contains(&model_str));
+
+        if !user_allowed || !token_allowed {
+            warn!(
+                "{} is not allowed to use {model} (user_allowed={user_allowed}, token_allowed={token_allowed})",
+                authorization.username
+            );
+            return Err(StatusCode::FORBIDDEN);
+        }
+
         if let Some(ref conf) = model_conf {
-            if !(conf
+            if !conf
                 .limit_to_users
                 .as_ref()
                 .is_none_or(|limited| limited.contains(&authorization.username))
-                && authorization
-                    .user
-                    .limit_to_models
-                    .as_ref()
-                    .is_none_or(|limited| limited.contains(&model_str)))
             {
-                warn!("{} is not allowed to use {model}", authorization.username);
+                warn!("{} is not in allowed users for {model}", authorization.username);
                 return Err(StatusCode::FORBIDDEN);
             }
-        } else if matches_openai {
-            if !authorization
-                .user
-                .limit_to_models
-                .as_ref()
-                .is_none_or(|limited| limited.contains(&model_str))
-            {
-                warn!("{} is not allowed to use {model}", authorization.username);
-                return Err(StatusCode::FORBIDDEN);
-            }
-        } else {
+        } else if !matches_openai {
             return Err(StatusCode::NOT_FOUND);
         }
     }
@@ -304,7 +392,7 @@ async fn generate(
 
     let prompt_tokens = crate::rate_limit::estimate_prompt_tokens(&body.0);
 
-    // Evaluate rate limits across models
+    // 1. Evaluate User-level rate limits across models
     let mut rate_headers = Vec::new();
     for model in &models {
         let model_str = model.to_string();
@@ -316,7 +404,29 @@ async fn generate(
                 return rejection.into_response();
             }
         }
+
+        // 2. Evaluate Token-level rate limits across models
+        if let Some(ref tok) = authorization.token {
+            let token_ident = tok.name.as_deref().unwrap_or(tok.token_prefix.as_deref().unwrap_or("token"));
+            match crate::rate_limit::check_token_rate_limits(
+                &tok.token_hash,
+                token_ident,
+                &model_str,
+                prompt_tokens,
+            )
+            .await
+            {
+                Ok(headers) => {
+                    rate_headers.extend(headers);
+                }
+                Err(rejection) => {
+                    return rejection.into_response();
+                }
+            }
+        }
     }
+
+    let token_hash_ref = authorization.token.as_ref().map(|t| t.token_hash.as_str());
 
     for model in models {
         let body_val = replace_model(&body.0, &model);
@@ -328,6 +438,7 @@ async fn generate(
                 &authorization.username,
                 authorization.user.log_request_body,
                 prompt_tokens,
+                token_hash_ref,
             )
             .await
         {

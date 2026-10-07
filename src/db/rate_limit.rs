@@ -7,6 +7,7 @@ use uuid::Uuid;
 pub struct RateLimitRule {
     pub id: String,
     pub user: Option<String>,
+    pub token_hash: Option<String>,
     pub model: Option<String>,
     pub time_window: String,
     pub limit_value: i64,
@@ -14,18 +15,20 @@ pub struct RateLimitRule {
     pub created_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateRateLimitPayload {
     pub user: Option<String>,
+    pub token_hash: Option<String>,
     pub model: Option<String>,
     pub time_window: String,
     pub limit_value: i64,
     pub unit: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UpdateRateLimitPayload {
     pub user: Option<String>,
+    pub token_hash: Option<String>,
     pub model: Option<String>,
     pub time_window: String,
     pub limit_value: i64,
@@ -36,6 +39,7 @@ pub struct UpdateRateLimitPayload {
 pub struct RateLimitUsageInfo {
     pub id: String,
     pub user: Option<String>,
+    pub token_hash: Option<String>,
     pub model: Option<String>,
     pub time_window: String,
     pub limit_value: i64,
@@ -99,16 +103,26 @@ pub async fn create_rate_limit(payload: &CreateRateLimitPayload) -> Result<RateL
         }
     });
 
+    let token_hash = payload.token_hash.as_deref().and_then(|t| {
+        let trimmed = t.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    });
+
     let now = Utc::now().timestamp();
 
     sqlx::query(
         r"
-        INSERT INTO rate_limits (id, user, model, time_window, limit_value, unit, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO rate_limits (id, user, token_hash, model, time_window, limit_value, unit, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ",
     )
     .bind(&id)
     .bind(&user)
+    .bind(&token_hash)
     .bind(&model)
     .bind(&time_window)
     .bind(payload.limit_value)
@@ -120,6 +134,7 @@ pub async fn create_rate_limit(payload: &CreateRateLimitPayload) -> Result<RateL
     Ok(RateLimitRule {
         id,
         user,
+        token_hash,
         model,
         time_window,
         limit_value: payload.limit_value,
@@ -151,14 +166,24 @@ pub async fn update_rate_limit(
         }
     });
 
+    let token_hash = payload.token_hash.as_deref().and_then(|t| {
+        let trimmed = t.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    });
+
     let res = sqlx::query(
         r"
         UPDATE rate_limits
-        SET user = ?, model = ?, time_window = ?, limit_value = ?, unit = ?
+        SET user = ?, token_hash = ?, model = ?, time_window = ?, limit_value = ?, unit = ?
         WHERE id = ?
         ",
     )
     .bind(&user)
+    .bind(&token_hash)
     .bind(&model)
     .bind(&time_window)
     .bind(payload.limit_value)
@@ -184,7 +209,7 @@ pub async fn delete_rate_limit(id: &str) -> Result<bool, anyhow::Error> {
 
 pub async fn get_rate_limit_by_id(id: &str) -> Result<Option<RateLimitRule>, anyhow::Error> {
     let rule = sqlx::query_as::<_, RateLimitRule>(
-        "SELECT id, user, model, time_window, limit_value, unit, created_at FROM rate_limits WHERE id = ?",
+        "SELECT id, user, token_hash, model, time_window, limit_value, unit, created_at FROM rate_limits WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(get_executor())
@@ -197,7 +222,7 @@ pub async fn get_all_rate_limits(
     user_filter: Option<&str>,
     model_filter: Option<&str>,
 ) -> Result<Vec<RateLimitRule>, anyhow::Error> {
-    let mut query = "SELECT id, user, model, time_window, limit_value, unit, created_at FROM rate_limits".to_string();
+    let mut query = "SELECT id, user, token_hash, model, time_window, limit_value, unit, created_at FROM rate_limits".to_string();
     let mut where_clauses = Vec::new();
 
     if let Some(u) = user_filter {
@@ -236,9 +261,10 @@ pub async fn get_matching_rate_limits(
 ) -> Result<Vec<RateLimitRule>, anyhow::Error> {
     let rules = sqlx::query_as::<_, RateLimitRule>(
         r"
-        SELECT id, user, model, time_window, limit_value, unit, created_at
+        SELECT id, user, token_hash, model, time_window, limit_value, unit, created_at
         FROM rate_limits
-        WHERE (user = ? OR user IS NULL OR user = '*')
+        WHERE token_hash IS NULL
+          AND (user = ? OR user IS NULL OR user = '*')
           AND (model = ? OR model IS NULL OR model = '*')
         ORDER BY created_at ASC
         ",
@@ -249,6 +275,55 @@ pub async fn get_matching_rate_limits(
     .await?;
 
     Ok(rules)
+}
+
+pub async fn get_matching_token_rate_limits(
+    token_hash: &str,
+    model_name: &str,
+) -> Result<Vec<RateLimitRule>, anyhow::Error> {
+    let rules = sqlx::query_as::<_, RateLimitRule>(
+        r"
+        SELECT id, user, token_hash, model, time_window, limit_value, unit, created_at
+        FROM rate_limits
+        WHERE token_hash = ?
+          AND (model = ? OR model IS NULL OR model = '*')
+        ORDER BY created_at ASC
+        ",
+    )
+    .bind(token_hash)
+    .bind(model_name)
+    .fetch_all(get_executor())
+    .await?;
+
+    Ok(rules)
+}
+
+pub async fn get_rate_limits_for_token(
+    token_hash: &str,
+) -> Result<Vec<RateLimitRule>, anyhow::Error> {
+    let rules = sqlx::query_as::<_, RateLimitRule>(
+        r"
+        SELECT id, user, token_hash, model, time_window, limit_value, unit, created_at
+        FROM rate_limits
+        WHERE token_hash = ?
+        ORDER BY created_at ASC
+        ",
+    )
+    .bind(token_hash)
+    .fetch_all(get_executor())
+    .await?;
+
+    Ok(rules)
+}
+
+pub async fn delete_rate_limits_for_token(
+    token_hash: &str,
+) -> Result<(), anyhow::Error> {
+    sqlx::query("DELETE FROM rate_limits WHERE token_hash = ?")
+        .bind(token_hash)
+        .execute(get_executor())
+        .await?;
+    Ok(())
 }
 
 pub async fn calculate_usage_for_rule(
@@ -278,7 +353,30 @@ pub async fn calculate_usage_for_rule(
         _ => "COALESCE(SUM(total_tokens), 0)",
     };
 
-    let used: i64 = if is_model_specific {
+    let used: i64 = if let Some(ref th) = rule.token_hash {
+        if is_model_specific {
+            let query = format!(
+                "SELECT {column_expr} FROM request WHERE token_hash = ? AND model = ? AND enqueue >= ?"
+            );
+            sqlx::query_scalar(&query)
+                .bind(th)
+                .bind(target_model)
+                .bind(start_time)
+                .fetch_one(get_executor())
+                .await
+                .unwrap_or(0)
+        } else {
+            let query = format!(
+                "SELECT {column_expr} FROM request WHERE token_hash = ? AND enqueue >= ?"
+            );
+            sqlx::query_scalar(&query)
+                .bind(th)
+                .bind(start_time)
+                .fetch_one(get_executor())
+                .await
+                .unwrap_or(0)
+        }
+    } else if is_model_specific {
         let query = format!(
             "SELECT {column_expr} FROM request WHERE user = ? AND model = ? AND enqueue >= ?"
         );
@@ -304,7 +402,28 @@ pub async fn calculate_usage_for_rule(
     let remaining = (rule.limit_value - used).max(0);
 
     let (reset_in_seconds, reset_timestamp) = if let Some(dur) = duration {
-        let oldest_in_window: Option<i64> = if is_model_specific {
+        let oldest_in_window: Option<i64> = if let Some(ref th) = rule.token_hash {
+            if is_model_specific {
+                sqlx::query_scalar(
+                    "SELECT MIN(enqueue) FROM request WHERE token_hash = ? AND model = ? AND enqueue >= ?",
+                )
+                .bind(th)
+                .bind(target_model)
+                .bind(start_time)
+                .fetch_optional(get_executor())
+                .await
+                .unwrap_or(None)
+            } else {
+                sqlx::query_scalar(
+                    "SELECT MIN(enqueue) FROM request WHERE token_hash = ? AND enqueue >= ?",
+                )
+                .bind(th)
+                .bind(start_time)
+                .fetch_optional(get_executor())
+                .await
+                .unwrap_or(None)
+            }
+        } else if is_model_specific {
             sqlx::query_scalar(
                 "SELECT MIN(enqueue) FROM request WHERE user = ? AND model = ? AND enqueue >= ?",
             )
@@ -339,6 +458,7 @@ pub async fn calculate_usage_for_rule(
     Ok(RateLimitUsageInfo {
         id: rule.id.clone(),
         user: rule.user.clone(),
+        token_hash: rule.token_hash.clone(),
         model: rule.model.clone(),
         time_window: rule.time_window.clone(),
         limit_value: rule.limit_value,

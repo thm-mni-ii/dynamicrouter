@@ -187,6 +187,7 @@ impl Handler for OpenaiHandler {
         username: &str,
         user_log_request_body: Option<bool>,
         prompt_tokens: i64,
+        token_hash: Option<&str>,
     ) -> Result<ModelResponse, anyhow::Error> {
         let ResolvedTarget {
             api_name,
@@ -227,7 +228,7 @@ impl Handler for OpenaiHandler {
         };
 
         let request_id =
-            create_request(&model_name, &instance_name, username, logged_request_body, Some(prompt_tokens)).await?;
+            create_request(&model_name, &instance_name, username, logged_request_body, Some(prompt_tokens), token_hash).await?;
 
         let mut req_builder = self
             .client

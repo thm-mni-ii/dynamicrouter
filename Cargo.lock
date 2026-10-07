@@ -708,6 +708,7 @@ dependencies = [
  "futures-util",
  "hex",
  "http-body-util",
+ "ipnet",
  "k8s-openapi",
  "kube",
  "log",

@@ -25,13 +25,51 @@ pub struct AuthConfig {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct UserToken {
     pub token_hash: String,
-    pub created_at: Option<String>,
+    pub username: Option<String>,
+    pub name: Option<String>,
+    pub token_prefix: Option<String>,
+    pub token_suffix: Option<String>,
+    pub preview: Option<String>,
+    pub limit_to_models: Option<HashSet<String>>,
+    pub expires_at: Option<i64>,
+    pub is_expired: Option<bool>,
+    pub allowed_ips: Option<Vec<String>>,
+    #[serde(default)]
+    pub rate_limits: Vec<RateLimitUsage>,
+    pub created_at: Option<i64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
+pub struct TokenRateLimitInput {
+    pub model: Option<String>,
+    pub time_window: String,
+    pub limit_value: i64,
+    pub unit: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct CreateTokenPayload {
+    pub name: Option<String>,
+    pub limit_to_models: Option<HashSet<String>>,
+    pub expires_at: Option<i64>,
+    pub allowed_ips: Option<Vec<String>>,
+    pub rate_limits: Option<Vec<TokenRateLimitInput>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct UpdateTokenPayload {
+    pub name: Option<String>,
+    pub limit_to_models: Option<HashSet<String>>,
+    pub expires_at: Option<i64>,
+    pub allowed_ips: Option<Vec<String>>,
+    pub rate_limits: Option<Vec<TokenRateLimitInput>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CreatedTokenResponse {
     pub token: String,
     pub username: String,
+    pub token_info: Option<UserToken>,
     pub message: String,
 }
 
@@ -272,6 +310,7 @@ pub struct RateLimitRecord {
 pub struct RateLimitUsage {
     pub id: String,
     pub user: Option<String>,
+    pub token_hash: Option<String>,
     pub model: Option<String>,
     pub time_window: String,
     pub limit_value: i64,

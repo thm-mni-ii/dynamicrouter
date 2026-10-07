@@ -98,6 +98,7 @@ impl Handler for SpawnerHandler {
         username: &str,
         user_log_request_body: Option<bool>,
         prompt_tokens: i64,
+        token_hash: Option<&str>,
     ) -> Result<ModelResponse, anyhow::Error> {
         let model_name = model.to_string();
         let config = get_model_config(&model_name)
@@ -144,7 +145,7 @@ impl Handler for SpawnerHandler {
             None
         };
         let request_id =
-            create_request(&model_name, dyn_model.id().await, username, request_body, Some(prompt_tokens)).await?;
+            create_request(&model_name, dyn_model.id().await, username, request_body, Some(prompt_tokens), token_hash).await?;
         drop(_lock_guard);
 
         let model = RetryingModel::new_dyn(dyn_model);

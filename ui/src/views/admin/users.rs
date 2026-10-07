@@ -158,7 +158,7 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
 
     let on_generate_token_for_user = move |username: String| {
         spawn(async move {
-            match create_token_for_user(&username).await {
+            match create_token_for_user(&username, None).await {
                 Ok(res) => {
                     generated_token.set(Some(res));
                 }

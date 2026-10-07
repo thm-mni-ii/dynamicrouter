@@ -1,5 +1,6 @@
 use crate::db::rate_limit::{
-    calculate_usage_for_rule, get_matching_rate_limits, normalize_unit, window_duration_seconds,
+    calculate_usage_for_rule, get_matching_rate_limits, get_matching_token_rate_limits,
+    normalize_unit, window_duration_seconds,
 };
 use axum::body::Body;
 use axum::http::{header, StatusCode};
@@ -255,6 +256,165 @@ pub async fn check_rate_limits(
         response_headers.push((
             "X-RateLimit-Scope".to_string(),
             format!("user={user_sc},model={model_sc},window={window_sc},unit={unit_sc}"),
+        ));
+    }
+
+    Ok(response_headers)
+}
+
+pub async fn check_token_rate_limits(
+    token_hash: &str,
+    token_name_or_preview: &str,
+    model_name: &str,
+    prompt_tokens: i64,
+) -> Result<Vec<(String, String)>, RateLimitRejection> {
+    let rules = match get_matching_token_rate_limits(token_hash, model_name).await {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("Failed to query token rate limit rules for {token_hash}: {e}");
+            return Ok(Vec::new());
+        }
+    };
+
+    if rules.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let now = Utc::now().timestamp();
+    let mut most_constrained_limit = None;
+    let mut min_remaining_ratio = f64::MAX;
+
+    for rule in &rules {
+        let usage = match calculate_usage_for_rule(rule, "", model_name, now).await {
+            Ok(u) => u,
+            Err(e) => {
+                warn!("Failed to calculate usage for token rule {}: {e}", rule.id);
+                continue;
+            }
+        };
+
+        let unit_norm = normalize_unit(Some(&rule.unit));
+        let additional_cost = match unit_norm.as_str() {
+            "requests" => 1,
+            "completion_tokens" => 0,
+            _ => prompt_tokens,
+        };
+
+        let projected_usage = usage.used + additional_cost;
+        let is_exceeded = if unit_norm == "requests" {
+            usage.used >= rule.limit_value
+        } else {
+            projected_usage > rule.limit_value || usage.used >= rule.limit_value
+        };
+
+        if is_exceeded {
+            let reset_secs = usage.reset_in_seconds.unwrap_or(0);
+            let reset_ts = usage.reset_timestamp.unwrap_or(now + reset_secs);
+
+            let mut headers = vec![
+                ("X-RateLimit-Limit".to_string(), rule.limit_value.to_string()),
+                ("X-RateLimit-Remaining".to_string(), "0".to_string()),
+                ("X-RateLimit-Reset".to_string(), reset_ts.to_string()),
+                (
+                    "X-RateLimit-Scope".to_string(),
+                    format!(
+                        "token={},model={},window={},unit={}",
+                        token_name_or_preview,
+                        rule.model.as_deref().unwrap_or("*"),
+                        rule.time_window,
+                        rule.unit
+                    ),
+                ),
+            ];
+
+            if reset_secs > 0 {
+                headers.push(("Retry-After".to_string(), reset_secs.to_string()));
+            }
+
+            let unit_display = match unit_norm.as_str() {
+                "requests" => "requests",
+                "prompt_tokens" => "prompt tokens",
+                "completion_tokens" => "completion tokens",
+                _ => "tokens",
+            };
+
+            let time_display = match rule.time_window.as_str() {
+                "minute" => "minute",
+                "hour" => "hour",
+                "day" => "day",
+                "week" => "week",
+                "month" => "month",
+                "permanent" => "permanent lifetime",
+                _ => &rule.time_window,
+            };
+
+            let target_model_display = rule.model.as_deref().unwrap_or("all models");
+            let message = if rule.time_window == "permanent" {
+                format!(
+                    "Token rate limit exceeded for token '{token_name_or_preview}' on {target_model_display}: permanent limit of {} {unit_display} reached (used: {} {unit_display}).",
+                    rule.limit_value, usage.used
+                )
+            } else {
+                format!(
+                    "Token rate limit exceeded for token '{token_name_or_preview}' on {target_model_display}: limit of {} {unit_display} per {time_display} reached (used: {}, requested prompt: {prompt_tokens}). Please retry in {reset_secs} seconds.",
+                    rule.limit_value, usage.used
+                )
+            };
+
+            let rate_limit_info = serde_json::json!({
+                "token": token_name_or_preview,
+                "model": model_name,
+                "window": rule.time_window,
+                "unit": rule.unit,
+                "limit": rule.limit_value,
+                "used": usage.used,
+                "requested_prompt_tokens": prompt_tokens,
+                "reset_in_seconds": reset_secs,
+                "reset_timestamp": reset_ts,
+            });
+
+            return Err(RateLimitRejection {
+                message,
+                headers,
+                rate_limit_info,
+            });
+        }
+
+        let remaining_after = (rule.limit_value - projected_usage).max(0);
+        let ratio = if rule.limit_value > 0 {
+            (remaining_after as f64) / (rule.limit_value as f64)
+        } else {
+            0.0
+        };
+
+        if ratio < min_remaining_ratio {
+            min_remaining_ratio = ratio;
+            let reset_ts = usage
+                .reset_timestamp
+                .unwrap_or(now + window_duration_seconds(&rule.time_window).unwrap_or(60));
+
+            most_constrained_limit = Some((
+                rule.limit_value,
+                remaining_after,
+                reset_ts,
+                token_name_or_preview,
+                rule.model.as_deref().unwrap_or("*"),
+                &rule.time_window,
+                &rule.unit,
+            ));
+        }
+    }
+
+    let mut response_headers = Vec::new();
+    if let Some((limit, remaining, reset_ts, token_sc, model_sc, window_sc, unit_sc)) =
+        most_constrained_limit
+    {
+        response_headers.push(("X-RateLimit-Limit".to_string(), limit.to_string()));
+        response_headers.push(("X-RateLimit-Remaining".to_string(), remaining.to_string()));
+        response_headers.push(("X-RateLimit-Reset".to_string(), reset_ts.to_string()));
+        response_headers.push((
+            "X-RateLimit-Scope".to_string(),
+            format!("token={token_sc},model={model_sc},window={window_sc},unit={unit_sc}"),
         ));
     }
 

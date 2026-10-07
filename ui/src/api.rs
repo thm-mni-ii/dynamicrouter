@@ -346,11 +346,25 @@ pub async fn fetch_user_tokens() -> Result<Vec<UserToken>, String> {
     Ok(wrapper.tokens)
 }
 
-pub async fn create_user_token() -> Result<CreatedTokenResponse, String> {
+pub async fn create_user_token(payload: Option<&CreateTokenPayload>) -> Result<CreatedTokenResponse, String> {
     let url = format!("{}/api/me/tokens", get_origin());
-    let req = apply_auth(client().post(&url));
+    let mut req = apply_auth(client().post(&url));
+    if let Some(p) = payload {
+        req = req.json(p);
+    }
     let res = req.send().await.map_err(|e| e.to_string())?;
     handle_json_response(res).await
+}
+
+pub async fn update_user_token(token_hash: &str, payload: &UpdateTokenPayload) -> Result<(), String> {
+    let url = format!("{}/api/me/tokens/{token_hash}", get_origin());
+    let req = apply_auth(client().put(&url)).json(payload);
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("Failed to update token: {}", res.status()))
+    }
 }
 
 pub async fn delete_user_token(token_hash: &str) -> Result<(), String> {
@@ -670,11 +684,33 @@ pub async fn delete_admin_user(username: &str) -> Result<(), String> {
     }
 }
 
-pub async fn create_token_for_user(username: &str) -> Result<CreatedTokenResponse, String> {
+pub async fn create_token_for_user(
+    username: &str,
+    payload: Option<&CreateTokenPayload>,
+) -> Result<CreatedTokenResponse, String> {
     let url = format!("{}/api/users/{username}/tokens", get_origin());
-    let req = apply_auth(client().post(&url));
+    let mut req = apply_auth(client().post(&url));
+    if let Some(p) = payload {
+        req = req.json(p);
+    }
     let res = req.send().await.map_err(|e| e.to_string())?;
     handle_json_response(res).await
+}
+
+#[allow(dead_code)]
+pub async fn update_token_for_user(
+    username: &str,
+    token_hash: &str,
+    payload: &UpdateTokenPayload,
+) -> Result<(), String> {
+    let url = format!("{}/api/users/{username}/tokens/{token_hash}", get_origin());
+    let req = apply_auth(client().put(&url)).json(payload);
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("Update token failed: {}", res.status()))
+    }
 }
 
 #[allow(dead_code)]

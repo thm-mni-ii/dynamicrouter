@@ -19,6 +19,7 @@ pub struct Request {
     pub prompt_tokens: Option<i64>,
     pub completion_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
+    pub token_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -117,7 +118,7 @@ pub async fn count_pending_requests_for(model: &str) -> Result<i64, anyhow::Erro
 
 pub async fn latest_for_each_model() -> Result<Vec<Request>, anyhow::Error> {
     Ok(sqlx::query_as::<_, Request>(
-        "SELECT id, model, MAX(enqueue) AS enqueue, done, instance, user, request_body, response_body, prompt_tokens, completion_tokens, total_tokens FROM request GROUP BY model"
+        "SELECT id, model, MAX(enqueue) AS enqueue, done, instance, user, request_body, response_body, prompt_tokens, completion_tokens, total_tokens, token_hash FROM request GROUP BY model"
     )
     .fetch_all(get_executor())
     .await?)
@@ -129,12 +130,13 @@ pub async fn create_request(
     user: &str,
     request_body: Option<&serde_json::Value>,
     prompt_tokens: Option<i64>,
+    token_hash: Option<&str>,
 ) -> Result<String, anyhow::Error> {
     let id = Uuid::new_v4().to_string();
     let body_str = request_body.map(serde_json::to_string).transpose()?;
     let p_tokens = prompt_tokens.unwrap_or(0);
     sqlx::query(
-        "INSERT INTO request (id, model, enqueue, instance, user, request_body, prompt_tokens, completion_tokens, total_tokens) VALUES (?, ?, unixepoch(), ?, ?, ?, ?, 0, ?)",
+        "INSERT INTO request (id, model, enqueue, instance, user, request_body, prompt_tokens, completion_tokens, total_tokens, token_hash) VALUES (?, ?, unixepoch(), ?, ?, ?, ?, 0, ?, ?)",
     )
     .bind(&id)
     .bind(model)
@@ -143,6 +145,7 @@ pub async fn create_request(
     .bind(body_str)
     .bind(p_tokens)
     .bind(p_tokens)
+    .bind(token_hash)
     .execute(get_executor())
     .await?;
     Ok(id)
@@ -205,7 +208,7 @@ pub async fn update_request_tokens(
 
 pub async fn get_request_by_id(id: &str) -> Result<Option<Request>, anyhow::Error> {
     let req = sqlx::query_as::<_, Request>(
-        "SELECT id, model, enqueue, done, instance, user, request_body, response_body, prompt_tokens, completion_tokens, total_tokens FROM request WHERE id = ?",
+        "SELECT id, model, enqueue, done, instance, user, request_body, response_body, prompt_tokens, completion_tokens, total_tokens, token_hash FROM request WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(get_executor())
@@ -258,9 +261,9 @@ pub async fn get_requests(filter: &RequestFilter) -> Result<PaginatedRequests, a
         .await?;
 
     let select_columns = if include_bodies {
-        "id, model, enqueue, done, instance, user, request_body, response_body, prompt_tokens, completion_tokens, total_tokens"
+        "id, model, enqueue, done, instance, user, request_body, response_body, prompt_tokens, completion_tokens, total_tokens, token_hash"
     } else {
-        "id, model, enqueue, done, instance, user, NULL AS request_body, NULL AS response_body, prompt_tokens, completion_tokens, total_tokens"
+        "id, model, enqueue, done, instance, user, NULL AS request_body, NULL AS response_body, prompt_tokens, completion_tokens, total_tokens, token_hash"
     };
 
     let data_query = format!(

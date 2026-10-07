@@ -1,7 +1,10 @@
 use crate::auth::oidc::{decode_jwt_payload_unverified, extract_claims_from_json};
 use crate::auth::session::SESSIONS;
 use crate::config::CONFIG;
-use crate::db::user::{User, get_user_by_token_hash, get_user_by_username, hash_token};
+use crate::db::user::{
+    User, get_user_and_token_by_token_hash, get_user_by_token_hash, get_user_by_username,
+    hash_token, normalize_token_secret,
+};
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{StatusCode, header};
@@ -54,6 +57,41 @@ impl IntoResponse for AuthError {
     }
 }
 
+pub fn extract_client_ip(parts: &Parts) -> Option<std::net::IpAddr> {
+    if let Some(forwarded_for) = parts
+        .headers
+        .get("x-forwarded-for")
+        .and_then(|h| h.to_str().ok())
+    {
+        if let Some(first_ip) = forwarded_for.split(',').next() {
+            let trimmed = first_ip.trim();
+            if let Ok(ip) = trimmed.parse::<std::net::IpAddr>() {
+                return Some(ip);
+            }
+        }
+    }
+
+    if let Some(real_ip) = parts
+        .headers
+        .get("x-real-ip")
+        .and_then(|h| h.to_str().ok())
+    {
+        let trimmed = real_ip.trim();
+        if let Ok(ip) = trimmed.parse::<std::net::IpAddr>() {
+            return Some(ip);
+        }
+    }
+
+    if let Some(connect_info) = parts
+        .extensions
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+    {
+        return Some(connect_info.ip());
+    }
+
+    None
+}
+
 fn extract_token_from_parts(parts: &Parts) -> Option<String> {
     if let Some(auth_header) = parts
         .headers
@@ -97,6 +135,8 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
             return Err(AuthError::MissingToken);
         }
 
+        let client_ip = extract_client_ip(parts);
+
         // 1. Check in active session store (OIDC PKCE login session)
         if let Some(session) = SESSIONS.get_session(&raw_token).await {
             let db_user = get_user_by_username(&session.username)
@@ -128,13 +168,22 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
             });
         }
 
-        // 2. Check in database user_tokens (hash of bearer token)
+        // 2. Check in database user_tokens (hash of normalized bearer token)
         let token_hash = hash_token(&raw_token);
-        if let Ok(Some(user)) = get_user_by_token_hash(&token_hash).await {
+        if let Ok(Some((user, user_token))) = get_user_and_token_by_token_hash(&token_hash).await {
             if user.is_expired() {
                 return Err(AuthError::Forbidden(format!(
                     "User account '{}' has expired",
                     user.username
+                )));
+            }
+            if user_token.is_expired() {
+                return Err(AuthError::Forbidden("Token has expired".to_string()));
+            }
+            if !user_token.is_ip_allowed(client_ip) {
+                return Err(AuthError::Forbidden(format!(
+                    "Client IP {:?} is not allowed for this token",
+                    client_ip
                 )));
             }
             let is_admin = user.is_admin || CONFIG.is_user_admin_by_config(&user.username);
@@ -147,7 +196,34 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
             });
         }
 
-        // 3. Also check if the raw token was itself stored as the token hash directly
+        // 3. Check fallback for unhashed or legacy tokens
+        let normalized = normalize_token_secret(&raw_token);
+        if let Ok(Some((user, user_token))) = get_user_and_token_by_token_hash(normalized).await {
+            if user.is_expired() {
+                return Err(AuthError::Forbidden(format!(
+                    "User account '{}' has expired",
+                    user.username
+                )));
+            }
+            if user_token.is_expired() {
+                return Err(AuthError::Forbidden("Token has expired".to_string()));
+            }
+            if !user_token.is_ip_allowed(client_ip) {
+                return Err(AuthError::Forbidden(format!(
+                    "Client IP {:?} is not allowed for this token",
+                    client_ip
+                )));
+            }
+            let is_admin = user.is_admin || CONFIG.is_user_admin_by_config(&user.username);
+            return Ok(AuthUser {
+                username: user.username.clone(),
+                email: None,
+                is_admin,
+                user: Some(user),
+                token: raw_token,
+            });
+        }
+
         if let Ok(Some(user)) = get_user_by_token_hash(&raw_token).await {
             if user.is_expired() {
                 return Err(AuthError::Forbidden(format!(
