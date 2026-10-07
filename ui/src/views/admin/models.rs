@@ -8,6 +8,7 @@ use crate::models::{
     AdminModelConfig, ModelHandlerConfig, OpenAiHandlerConf, SpawnerConfig,
 };
 use crate::state::Toast;
+use crate::views::admin::openai_apis::suggest_corrected_url;
 use dioxus::prelude::*;
 use std::collections::HashSet;
 
@@ -501,9 +502,30 @@ pub fn AdminModelsView(toasts: Signal<Vec<Toast>>) -> Element {
                                     label { class: "form-label", "Custom Upstream URL (Optional)" }
                                     input {
                                         class: "glass-input",
-                                        placeholder: "https://api.openai.com/v1",
+                                        placeholder: "https://api.openai.com/v1 (or https://openrouter.ai/api/v1)",
                                         value: "{form_openai_url.read()}",
                                         oninput: move |evt| form_openai_url.set(evt.value()),
+                                    }
+                                    if let Some((suggested, reason)) = suggest_corrected_url(&form_openai_url.read()) {
+                                        div {
+                                            style: "margin-top: 0.35rem; padding: 0.5rem 0.75rem; border-radius: 8px; background: rgba(234, 179, 8, 0.1); border: 1px solid rgba(234, 179, 8, 0.25); display: flex; flex-direction: column; gap: 0.25rem;",
+                                            div {
+                                                class: "flex items-center justify-between gap-2",
+                                                span {
+                                                    class: "text-xs font-medium text-warning",
+                                                    "💡 Did you mean: "
+                                                    strong { class: "font-mono", "{suggested}" }
+                                                }
+                                                button {
+                                                    r#type: "button",
+                                                    class: "glass-btn btn-secondary btn-sm",
+                                                    style: "padding: 2px 8px; font-size: 11px; height: 22px;",
+                                                    onclick: move |_| form_openai_url.set(suggested.to_string()),
+                                                    "Use Suggestion"
+                                                }
+                                            }
+                                            span { class: "text-xs text-muted", "{reason} (You may still override and keep your custom URL)" }
+                                        }
                                     }
                                 }
 

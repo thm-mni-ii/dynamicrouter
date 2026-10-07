@@ -8,6 +8,44 @@ use crate::state::Toast;
 use dioxus::prelude::*;
 use std::collections::HashSet;
 
+pub fn suggest_corrected_url(url_str: &str) -> Option<(&'static str, &'static str)> {
+    let trimmed = url_str.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_lowercase();
+    if lower.contains("openrouter.ai") {
+        if !lower.contains("/api/v1") {
+            return Some((
+                "https://openrouter.ai/api/v1",
+                "OpenRouter API requires the '/api/v1' path prefix (e.g. https://openrouter.ai/api/v1).",
+            ));
+        }
+    } else if lower.contains("api.groq.com") {
+        if !lower.contains("/openai/v1") {
+            return Some((
+                "https://api.groq.com/openai/v1",
+                "Groq OpenAI API requires the '/openai/v1' path prefix.",
+            ));
+        }
+    } else if lower.contains("api.deepinfra.com") {
+        if !lower.contains("/v1/openai") {
+            return Some((
+                "https://api.deepinfra.com/v1/openai",
+                "DeepInfra OpenAI API requires the '/v1/openai' path prefix.",
+            ));
+        }
+    } else if lower.contains("api.openai.com") {
+        if !lower.contains("/v1") {
+            return Some((
+                "https://api.openai.com/v1",
+                "OpenAI API uses the '/v1' path prefix.",
+            ));
+        }
+    }
+    None
+}
+
 fn load_apis_action(
     mut is_loading: Signal<bool>,
     mut apis: Signal<Vec<OpenAiApiRecord>>,
@@ -306,6 +344,56 @@ pub fn AdminOpenAiApisView(toasts: Signal<Vec<Toast>>) -> Element {
                     div {
                         class: "flex flex-col gap-3",
                         
+                        if is_new {
+                            div {
+                                class: "form-group",
+                                label { class: "form-label text-xs text-muted", "Quick Presets" }
+                                div {
+                                    class: "flex flex-wrap gap-2",
+                                    button {
+                                        r#type: "button",
+                                        class: "glass-btn btn-secondary btn-sm",
+                                        onclick: move |_| {
+                                            form_id.set("openrouter".to_string());
+                                            form_url.set("https://openrouter.ai/api/v1".to_string());
+                                            form_prefix.set("or/".to_string());
+                                        },
+                                        "OpenRouter"
+                                    }
+                                    button {
+                                        r#type: "button",
+                                        class: "glass-btn btn-secondary btn-sm",
+                                        onclick: move |_| {
+                                            form_id.set("openai".to_string());
+                                            form_url.set("https://api.openai.com/v1".to_string());
+                                            form_prefix.set("openai/".to_string());
+                                        },
+                                        "OpenAI"
+                                    }
+                                    button {
+                                        r#type: "button",
+                                        class: "glass-btn btn-secondary btn-sm",
+                                        onclick: move |_| {
+                                            form_id.set("groq".to_string());
+                                            form_url.set("https://api.groq.com/openai/v1".to_string());
+                                            form_prefix.set("groq/".to_string());
+                                        },
+                                        "Groq"
+                                    }
+                                    button {
+                                        r#type: "button",
+                                        class: "glass-btn btn-secondary btn-sm",
+                                        onclick: move |_| {
+                                            form_id.set("deepinfra".to_string());
+                                            form_url.set("https://api.deepinfra.com/v1/openai".to_string());
+                                            form_prefix.set("deepinfra/".to_string());
+                                        },
+                                        "DeepInfra"
+                                    }
+                                }
+                            }
+                        }
+
                         div {
                             class: "form-group",
                             label { class: "form-label", "Provider ID (e.g. openrouter, groq)" }
@@ -322,9 +410,30 @@ pub fn AdminOpenAiApisView(toasts: Signal<Vec<Toast>>) -> Element {
                             label { class: "form-label", "Endpoint Base URL" }
                             input {
                                 class: "glass-input font-mono",
-                                placeholder: "https://api.openai.com/v1",
+                                placeholder: "https://api.openai.com/v1 (or https://openrouter.ai/api/v1)",
                                 value: "{form_url.read()}",
                                 oninput: move |evt| form_url.set(evt.value()),
+                            }
+                            if let Some((suggested, reason)) = suggest_corrected_url(&form_url.read()) {
+                                div {
+                                    style: "margin-top: 0.35rem; padding: 0.5rem 0.75rem; border-radius: 8px; background: rgba(234, 179, 8, 0.1); border: 1px solid rgba(234, 179, 8, 0.25); display: flex; flex-direction: column; gap: 0.25rem;",
+                                    div {
+                                        class: "flex items-center justify-between gap-2",
+                                        span {
+                                            class: "text-xs font-medium text-warning",
+                                            "💡 Did you mean: "
+                                            strong { class: "font-mono", "{suggested}" }
+                                        }
+                                        button {
+                                            r#type: "button",
+                                            class: "glass-btn btn-secondary btn-sm",
+                                            style: "padding: 2px 8px; font-size: 11px; height: 22px;",
+                                            onclick: move |_| form_url.set(suggested.to_string()),
+                                            "Use Suggestion"
+                                        }
+                                    }
+                                    span { class: "text-xs text-muted", "{reason} (You may still override and keep your custom URL)" }
+                                }
                             }
                         }
 

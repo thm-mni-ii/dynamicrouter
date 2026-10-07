@@ -297,12 +297,21 @@ pub struct MyRateLimitsResponse {
     pub rate_limits: Vec<RateLimitUsage>,
 }
 
+fn deserialize_nullable_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<String> = serde::Deserialize::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
+}
+
 // --------------------------------------------------------------------------
 // Chat API Payloads
 // --------------------------------------------------------------------------
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct ChatMessage {
     pub role: String,
+    #[serde(default, deserialize_with = "deserialize_nullable_string")]
     pub content: String,
 }
 

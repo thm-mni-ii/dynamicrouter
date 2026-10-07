@@ -326,6 +326,7 @@ pub fn ChatView() -> Element {
                             oninput: move |evt| user_input.set(evt.value()),
                             onkeydown: move |evt: KeyboardEvent| {
                                 if evt.key() == Key::Enter && !evt.modifiers().shift() {
+                                    evt.prevent_default();
                                     send_chat_action(is_loading, user_input, selected_model, system_prompt, messages, error_msg, temperature);
                                 }
                             }

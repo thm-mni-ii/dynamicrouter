@@ -70,13 +70,16 @@ async fn create_new_api(
         )
     })?;
 
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({
-            "status": "created",
-            "id": payload.id,
-        })),
-    ))
+    let mut resp = json!({
+        "status": "created",
+        "id": payload.id,
+    });
+
+    if let Some((suggested, reason)) = OpenAiApiRecord::suggest_corrected_url(payload.url.as_str()) {
+        resp["warning"] = json!(format!("Did you mean '{suggested}'? {reason}"));
+    }
+
+    Ok((StatusCode::CREATED, Json(resp)))
 }
 
 async fn update_api(
@@ -101,10 +104,16 @@ async fn update_api(
         )
     })?;
 
-    Ok(Json(json!({
+    let mut resp = json!({
         "status": "updated",
         "id": id,
-    })))
+    });
+
+    if let Some((suggested, reason)) = OpenAiApiRecord::suggest_corrected_url(payload.url.as_str()) {
+        resp["warning"] = json!(format!("Did you mean '{suggested}'? {reason}"));
+    }
+
+    Ok(Json(resp))
 }
 
 async fn remove_api(

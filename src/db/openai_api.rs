@@ -61,13 +61,88 @@ impl Clone for OpenAiApiRecord {
 }
 
 impl OpenAiApiRecord {
-    pub fn endpoint_url(&self, path: &str) -> Result<Url, url::ParseError> {
-        let mut base = self.url.as_str().trim_end_matches('/').to_string();
-        if !base.ends_with("/v1") && !base.contains("/v1/") {
-            base.push_str("/v1");
+    /// Validates an endpoint base URL and returns an overridable suggestion if a provider-specific prefix is missing.
+    pub fn suggest_corrected_url(url_str: &str) -> Option<(&'static str, &'static str)> {
+        let trimmed = url_str.trim();
+        let parsed = Url::parse(trimmed).ok()?;
+        let host = parsed.host_str()?;
+        let path = parsed.path().trim_end_matches('/');
+
+        if host == "openrouter.ai" || host.ends_with(".openrouter.ai") {
+            if path.is_empty() || path == "/" {
+                return Some((
+                    "https://openrouter.ai/api/v1",
+                    "OpenRouter API requires the '/api/v1' path prefix (e.g. https://openrouter.ai/api/v1).",
+                ));
+            } else if path == "/api" {
+                return Some((
+                    "https://openrouter.ai/api/v1",
+                    "OpenRouter API requires the '/api/v1' path prefix.",
+                ));
+            }
+        } else if host == "api.groq.com" || host.ends_with(".groq.com") {
+            if path.is_empty() || path == "/" {
+                return Some((
+                    "https://api.groq.com/openai/v1",
+                    "Groq OpenAI API requires the '/openai/v1' path prefix.",
+                ));
+            } else if path == "/openai" {
+                return Some((
+                    "https://api.groq.com/openai/v1",
+                    "Groq OpenAI API requires the '/openai/v1' path prefix.",
+                ));
+            }
+        } else if host == "api.deepinfra.com" || host.ends_with(".deepinfra.com") {
+            if path.is_empty() || path == "/" || path == "/v1" {
+                return Some((
+                    "https://api.deepinfra.com/v1/openai",
+                    "DeepInfra OpenAI API requires the '/v1/openai' path prefix.",
+                ));
+            }
+        } else if (host == "api.openai.com" || host.ends_with(".openai.com")) && (path.is_empty() || path == "/") {
+            return Some((
+                "https://api.openai.com/v1",
+                "OpenAI API typically uses the '/v1' path prefix.",
+            ));
         }
+
+        None
+    }
+
+    pub fn endpoint_url(&self, path: &str) -> Result<Url, url::ParseError> {
         let clean_path = path.trim_start_matches('/');
-        let url_str = format!("{base}/{clean_path}");
+        let raw_url = self.url.as_str().trim_end_matches('/');
+
+        // If the URL already ends with the target endpoint (e.g. "chat/completions"), use it directly
+        if raw_url.ends_with(clean_path) {
+            return Url::parse(raw_url);
+        }
+
+        let host = self.url.host_str().unwrap_or("");
+        let path_part = self.url.path().trim_end_matches('/');
+
+        let base = if (host == "openrouter.ai" || host.ends_with(".openrouter.ai"))
+            && (path_part.is_empty() || path_part == "/" || path_part == "/api")
+        {
+            format!("{}/api/v1", self.url.origin().ascii_serialization())
+        } else if (host == "api.groq.com" || host.ends_with(".groq.com"))
+            && (path_part.is_empty() || path_part == "/" || path_part == "/openai")
+        {
+            format!("{}/openai/v1", self.url.origin().ascii_serialization())
+        } else if (host == "api.deepinfra.com" || host.ends_with(".deepinfra.com"))
+            && (path_part.is_empty() || path_part == "/" || path_part == "/v1")
+        {
+            format!("{}/v1/openai", self.url.origin().ascii_serialization())
+        } else {
+            let mut b = raw_url.to_string();
+            if !b.ends_with("/v1") && !b.contains("/v1/") && !b.ends_with("/openai") {
+                b.push_str("/v1");
+            }
+            b
+        };
+
+        let base_clean = base.trim_end_matches('/');
+        let url_str = format!("{base_clean}/{clean_path}");
         Url::parse(&url_str)
     }
 

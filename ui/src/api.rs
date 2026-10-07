@@ -46,6 +46,19 @@ async fn handle_json_response<T: DeserializeOwned>(res: Response) -> Result<T, S
             .map_err(|e| format!("JSON parse error: {e}"))
     } else {
         let text = res.text().await.unwrap_or_default();
+        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(err_val) = json_val.get("error") {
+                if let Some(msg) = err_val.as_str() {
+                    return Err(format!("Error ({status}): {msg}"));
+                } else if let Some(msg) = err_val.get("message").and_then(|m| m.as_str()) {
+                    return Err(format!("Error ({status}): {msg}"));
+                }
+            }
+        }
+        let trimmed = text.trim();
+        if trimmed.starts_with("<!DOCTYPE") || trimmed.starts_with("<html") {
+            return Err(format!("HTTP {status}: Upstream returned an HTML error page"));
+        }
         Err(format!("HTTP {status}: {text}"))
     }
 }
