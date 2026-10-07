@@ -1,1 +1,6 @@
 /target
+/ui/fonts/
+*.woff2
+*.woff
+*.ttf
+

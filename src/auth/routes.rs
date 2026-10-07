@@ -6,8 +6,9 @@ use crate::auth::oidc::{
 use crate::auth::session::SESSIONS;
 use crate::config::CONFIG;
 use crate::db::user::{create_user, get_user_by_username};
+use crate::ui::CSP_VALUE;
 use axum::extract::Query;
-use axum::http::header::{HeaderMap, SET_COOKIE, CONTENT_TYPE};
+use axum::http::header::{HeaderMap, HeaderValue, CONTENT_SECURITY_POLICY, CONTENT_TYPE, SET_COOKIE, X_CONTENT_TYPE_OPTIONS, X_FRAME_OPTIONS, REFERRER_POLICY};
 use axum::http::{StatusCode, Uri};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -149,6 +150,17 @@ async fn auth_login(
     }
 }
 
+fn html_response(status: StatusCode, html: String) -> Response {
+    let mut response = (status, Html(html)).into_response();
+    let headers = response.headers_mut();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
+    headers.insert(CONTENT_SECURITY_POLICY, HeaderValue::from_static(CSP_VALUE));
+    headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    headers.insert(X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(REFERRER_POLICY, HeaderValue::from_static("strict-origin-when-cross-origin"));
+    response
+}
+
 fn render_callback_success_html(username: &str, is_admin: bool, session_token: &str) -> String {
     let role_badge = if is_admin {
         r#"<span class="badge badge-admin">Administrator</span>"#
@@ -161,11 +173,23 @@ fn render_callback_success_html(username: &str, is_admin: bool, session_token: &
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="{CSP_VALUE}">
   <title>Authenticating - DynamicRouter</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
   <style>
+    @font-face {{
+      font-family: 'Inter';
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+      src: url('/fonts/inter.woff2') format('woff2');
+    }}
+    @font-face {{
+      font-family: 'Outfit';
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+      src: url('/fonts/outfit.woff2') format('woff2');
+    }}
     :root {{
       --bg-base: #060913;
       --text-main: #f8fafc;
@@ -405,9 +429,23 @@ fn render_callback_error_html(error_message: &str) -> String {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="{CSP_VALUE}">
   <title>Authentication Failed - DynamicRouter</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
   <style>
+    @font-face {{
+      font-family: 'Inter';
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+      src: url('/fonts/inter.woff2') format('woff2');
+    }}
+    @font-face {{
+      font-family: 'Outfit';
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+      src: url('/fonts/outfit.woff2') format('woff2');
+    }}
     :root {{
       --bg-base: #060913;
       --text-main: #f8fafc;
@@ -505,11 +543,7 @@ async fn handle_callback(
         None => {
             if is_browser_get {
                 let html = render_callback_error_html("Invalid or expired state parameter. Please try logging in again.");
-                return Ok((
-                    StatusCode::BAD_REQUEST,
-                    [(CONTENT_TYPE, "text/html; charset=utf-8")],
-                    Html(html),
-                ).into_response());
+                return Ok(html_response(StatusCode::BAD_REQUEST, html));
             }
             return Err((
                 StatusCode::BAD_REQUEST,
@@ -527,11 +561,7 @@ async fn handle_callback(
         Err(e) => {
             if is_browser_get {
                 let html = render_callback_error_html(&format!("OIDC discovery failed: {e}"));
-                return Ok((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    [(CONTENT_TYPE, "text/html; charset=utf-8")],
-                    Html(html),
-                ).into_response());
+                return Ok(html_response(StatusCode::INTERNAL_SERVER_ERROR, html));
             }
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -556,11 +586,7 @@ async fn handle_callback(
             error!("Token exchange failed: {e}");
             if is_browser_get {
                 let html = render_callback_error_html(&format!("Token exchange failed: {e}"));
-                return Ok((
-                    StatusCode::BAD_REQUEST,
-                    [(CONTENT_TYPE, "text/html; charset=utf-8")],
-                    Html(html),
-                ).into_response());
+                return Ok(html_response(StatusCode::BAD_REQUEST, html));
             }
             return Err((
                 StatusCode::BAD_REQUEST,
@@ -640,11 +666,7 @@ async fn handle_callback(
             let html = render_callback_error_html(&format!(
                 "User registration is disabled and account '{username}' does not exist. Please contact an administrator."
             ));
-            return Ok((
-                StatusCode::FORBIDDEN,
-                [(CONTENT_TYPE, "text/html; charset=utf-8")],
-                Html(html),
-            ).into_response());
+            return Ok(html_response(StatusCode::FORBIDDEN, html));
         }
         return Err((
             StatusCode::FORBIDDEN,
@@ -661,11 +683,7 @@ async fn handle_callback(
             let html = render_callback_error_html(&format!(
                 "User account '{username}' has expired. Please contact an administrator."
             ));
-            return Ok((
-                StatusCode::FORBIDDEN,
-                [(CONTENT_TYPE, "text/html; charset=utf-8")],
-                Html(html),
-            ).into_response());
+            return Ok(html_response(StatusCode::FORBIDDEN, html));
         }
         return Err((
             StatusCode::FORBIDDEN,
@@ -712,11 +730,7 @@ async fn handle_callback(
 
     if is_browser_get {
         let html = render_callback_success_html(&username, is_admin, &session_token);
-        let mut response = (
-            StatusCode::OK,
-            [(CONTENT_TYPE, "text/html; charset=utf-8")],
-            Html(html),
-        ).into_response();
+        let mut response = html_response(StatusCode::OK, html);
 
         response
             .headers_mut()
@@ -749,22 +763,14 @@ async fn auth_callback_get(
     if let Some(err) = query.error {
         let desc = query.error_description.unwrap_or_default();
         let html = render_callback_error_html(&format!("OIDC authorization error: {err} ({desc})"));
-        return Ok((
-            StatusCode::BAD_REQUEST,
-            [(CONTENT_TYPE, "text/html; charset=utf-8")],
-            Html(html),
-        ).into_response());
+        return Ok(html_response(StatusCode::BAD_REQUEST, html));
     }
 
     let code = match query.code {
         Some(c) => c,
         None => {
             let html = render_callback_error_html("Missing code parameter from identity provider.");
-            return Ok((
-                StatusCode::BAD_REQUEST,
-                [(CONTENT_TYPE, "text/html; charset=utf-8")],
-                Html(html),
-            ).into_response());
+            return Ok(html_response(StatusCode::BAD_REQUEST, html));
         }
     };
 
@@ -772,11 +778,7 @@ async fn auth_callback_get(
         Some(s) => s,
         None => {
             let html = render_callback_error_html("Missing state parameter from identity provider.");
-            return Ok((
-                StatusCode::BAD_REQUEST,
-                [(CONTENT_TYPE, "text/html; charset=utf-8")],
-                Html(html),
-            ).into_response());
+            return Ok(html_response(StatusCode::BAD_REQUEST, html));
         }
     };
 
