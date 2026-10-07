@@ -286,16 +286,19 @@ async fn get_my_models(
     })?;
 
     for model in db_models {
-        if !user.is_admin && model.hidden.unwrap_or(model.id == "*") {
+        if model.id == "*" || crate::utils::is_glob_pattern(&model.id) {
+            continue;
+        }
+        if !user.is_admin && model.hidden.unwrap_or(false) {
             continue;
         }
         if let Some(users) = &model.limit_to_users
-            && !users.contains(&user.username)
+            && !crate::utils::is_user_allowed(users, &user.username)
         {
             continue;
         }
         if let Some(limit_to) = &user.user.as_ref().and_then(|u| u.limit_to_models.as_ref())
-            && !limit_to.contains(&model.id)
+            && !crate::utils::is_model_allowed(limit_to, &model.id)
         {
             continue;
         }
@@ -342,8 +345,8 @@ async fn get_my_models(
                 };
 
                 if let Some(limit_to) = &user.user.as_ref().and_then(|u| u.limit_to_models.as_ref())
-                    && !limit_to.contains(&full_id)
-                    && !limit_to.contains(m)
+                    && !crate::utils::is_model_allowed(limit_to, &full_id)
+                    && !crate::utils::is_model_allowed(limit_to, m)
                 {
                     continue;
                 }

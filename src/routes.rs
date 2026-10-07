@@ -39,23 +39,23 @@ pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusC
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     for model in db_models {
-        if model.hidden.unwrap_or(model.id == "*") {
+        if model.id == "*" || crate::utils::is_glob_pattern(&model.id) || model.hidden.unwrap_or(false) {
             continue;
         }
         if let Some(users) = &model.limit_to_users
-            && !users.contains(&authorization.username)
+            && !crate::utils::is_user_allowed(users, &authorization.username)
         {
             continue;
         }
         // User account model restrictions
         if let Some(limit_to) = &authorization.user.limit_to_models
-            && !limit_to.contains(&model.id)
+            && !crate::utils::is_model_allowed(limit_to, &model.id)
         {
             continue;
         }
         // Token model restrictions
         if let Some(token_limit_to) = authorization.token.as_ref().and_then(|t| t.limit_to_models.as_ref())
-            && !token_limit_to.contains(&model.id)
+            && !crate::utils::is_model_allowed(token_limit_to, &model.id)
         {
             continue;
         }
@@ -80,15 +80,15 @@ pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusC
                 };
 
                 if let Some(limit_to) = &authorization.user.limit_to_models
-                    && !limit_to.contains(&full_id)
-                    && !limit_to.contains(m)
+                    && !crate::utils::is_model_allowed(limit_to, &full_id)
+                    && !crate::utils::is_model_allowed(limit_to, m)
                 {
                     continue;
                 }
 
                 if let Some(token_limit_to) = authorization.token.as_ref().and_then(|t| t.limit_to_models.as_ref())
-                    && !token_limit_to.contains(&full_id)
-                    && !token_limit_to.contains(m)
+                    && !crate::utils::is_model_allowed(token_limit_to, &full_id)
+                    && !crate::utils::is_model_allowed(token_limit_to, m)
                 {
                     continue;
                 }
@@ -332,6 +332,11 @@ async fn extract_models(
 
     for model in &model_refs {
         let model_str = model.to_string();
+        if model_str == "*" || crate::utils::is_glob_pattern(&model_str) {
+            warn!("Direct execution of wildcard/glob model '{model_str}' is forbidden");
+            return Err(StatusCode::BAD_REQUEST);
+        }
+
         let matches_openai = openai_apis.iter().any(|api| api.matches_model(&model_str));
 
         let model_conf = get_model_config(&model_str).await.unwrap_or(None);
@@ -341,14 +346,14 @@ async fn extract_models(
             .user
             .limit_to_models
             .as_ref()
-            .is_none_or(|limited| limited.contains(&model_str));
+            .is_none_or(|limited| crate::utils::is_model_allowed(limited, &model_str));
 
         // 2. Check token model limits
         let token_allowed = authorization
             .token
             .as_ref()
             .and_then(|t| t.limit_to_models.as_ref())
-            .is_none_or(|limited| limited.contains(&model_str));
+            .is_none_or(|limited| crate::utils::is_model_allowed(limited, &model_str));
 
         if !user_allowed || !token_allowed {
             warn!(
@@ -362,7 +367,7 @@ async fn extract_models(
             if !conf
                 .limit_to_users
                 .as_ref()
-                .is_none_or(|limited| limited.contains(&authorization.username))
+                .is_none_or(|limited| crate::utils::is_user_allowed(limited, &authorization.username))
             {
                 warn!("{} is not in allowed users for {model}", authorization.username);
                 return Err(StatusCode::FORBIDDEN);

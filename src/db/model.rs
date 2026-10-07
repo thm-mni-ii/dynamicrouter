@@ -196,13 +196,25 @@ impl ModelRow {
 }
 
 pub async fn get_model_config(model_id: &str) -> Result<Option<ModelConfig>, anyhow::Error> {
+    if model_id == "*" || crate::utils::is_glob_pattern(model_id) {
+        return Ok(None);
+    }
+
     if let Some(config) = get_exact_model_config(model_id).await? {
         return Ok(Some(config));
     }
-    if model_id != "*" {
-        return get_exact_model_config("*").await;
+
+    let all_models = get_all_models().await?;
+    for model in &all_models {
+        if model.id != "*"
+            && crate::utils::is_glob_pattern(&model.id)
+            && crate::utils::matches_glob(&model.id, model_id)
+        {
+            return Ok(Some(model.clone()));
+        }
     }
-    Ok(None)
+
+    get_exact_model_config("*").await
 }
 
 pub async fn get_exact_model_config(model_id: &str) -> Result<Option<ModelConfig>, anyhow::Error> {

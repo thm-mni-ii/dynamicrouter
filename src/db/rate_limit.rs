@@ -265,16 +265,23 @@ pub async fn get_matching_rate_limits(
         FROM rate_limits
         WHERE token_hash IS NULL
           AND (user = ? OR user IS NULL OR user = '*')
-          AND (model = ? OR model IS NULL OR model = '*')
         ORDER BY created_at ASC
         ",
     )
     .bind(username)
-    .bind(model_name)
     .fetch_all(get_executor())
     .await?;
 
-    Ok(rules)
+    let filtered = rules
+        .into_iter()
+        .filter(|rule| match &rule.model {
+            None => true,
+            Some(m) if m == "*" || m == model_name => true,
+            Some(m) => crate::utils::matches_glob(m, model_name),
+        })
+        .collect();
+
+    Ok(filtered)
 }
 
 pub async fn get_matching_token_rate_limits(
@@ -286,16 +293,23 @@ pub async fn get_matching_token_rate_limits(
         SELECT id, user, token_hash, model, time_window, limit_value, unit, created_at
         FROM rate_limits
         WHERE token_hash = ?
-          AND (model = ? OR model IS NULL OR model = '*')
         ORDER BY created_at ASC
         ",
     )
     .bind(token_hash)
-    .bind(model_name)
     .fetch_all(get_executor())
     .await?;
 
-    Ok(rules)
+    let filtered = rules
+        .into_iter()
+        .filter(|rule| match &rule.model {
+            None => true,
+            Some(m) if m == "*" || m == model_name => true,
+            Some(m) => crate::utils::matches_glob(m, model_name),
+        })
+        .collect();
+
+    Ok(filtered)
 }
 
 pub async fn get_rate_limits_for_token(

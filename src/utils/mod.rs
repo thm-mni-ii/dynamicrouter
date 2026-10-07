@@ -1,6 +1,9 @@
+pub mod glob;
 pub mod huggingface;
 pub mod logging;
 pub mod response;
+
+pub use glob::{is_glob_pattern, is_model_allowed, is_user_allowed, matches_glob};
 
 use crate::utils::huggingface::HfModel;
 use once_cell::sync::Lazy;
