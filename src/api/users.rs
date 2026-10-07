@@ -1,9 +1,12 @@
 use crate::auth::AdminUser;
-use crate::db::rate_limit::calculate_usage_for_rule;
+use crate::db::rate_limit::{
+    CreateRateLimitPayload, calculate_usage_for_rule, create_rate_limit,
+    delete_rate_limits_for_user, get_rate_limits_strictly_for_user,
+};
 use crate::db::user::{
-    CreateTokenInput, UpdateTokenInput, create_user, delete_user, delete_user_token,
-    delete_user_token_for_user, generate_and_add_user_token, get_all_users, get_user_by_username,
-    get_user_tokens, update_user_token_for_user,
+    CreateTokenInput, TokenRateLimitInput, UpdateTokenInput, create_user, delete_user,
+    delete_user_token, delete_user_token_for_user, generate_and_add_user_token, get_all_users,
+    get_user_by_username, get_user_tokens, update_user_token_for_user,
 };
 use axum::extract::Path;
 use axum::http::StatusCode;
@@ -21,6 +24,7 @@ pub struct CreateUserPayload {
     pub log_request_body: Option<bool>,
     pub is_admin: Option<bool>,
     pub expires_at: Option<i64>,
+    pub rate_limits: Option<Vec<TokenRateLimitInput>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -29,6 +33,7 @@ pub struct UpdateUserPayload {
     pub log_request_body: Option<bool>,
     pub is_admin: Option<bool>,
     pub expires_at: Option<i64>,
+    pub rate_limits: Option<Vec<TokenRateLimitInput>>,
 }
 
 pub fn users_routes() -> Router {
@@ -50,7 +55,31 @@ async fn list_users(
         )
     })?;
 
-    Ok(Json(json!({ "users": users })))
+    let now = Utc::now().timestamp();
+    let mut enriched_users = Vec::new();
+
+    for user in users {
+        let rules = get_rate_limits_strictly_for_user(&user.username).await.unwrap_or_default();
+        let mut enriched_rules = Vec::new();
+        for rule in &rules {
+            let model = rule.model.as_deref().unwrap_or("*");
+            if let Ok(info) = calculate_usage_for_rule(rule, &user.username, model, now).await {
+                enriched_rules.push(info);
+            }
+        }
+
+        enriched_users.push(json!({
+            "username": user.username,
+            "limit_to_models": user.limit_to_models,
+            "log_request_body": user.log_request_body,
+            "is_admin": user.is_admin,
+            "expires_at": user.expires_at,
+            "is_expired": user.is_expired(),
+            "rate_limits": enriched_rules,
+        }));
+    }
+
+    Ok(Json(json!({ "users": enriched_users })))
 }
 
 async fn get_single_user(
@@ -65,7 +94,25 @@ async fn get_single_user(
     })?;
 
     if let Some(u) = user {
-        Ok(Json(json!(u)))
+        let now = Utc::now().timestamp();
+        let rules = get_rate_limits_strictly_for_user(&u.username).await.unwrap_or_default();
+        let mut enriched_rules = Vec::new();
+        for rule in &rules {
+            let model = rule.model.as_deref().unwrap_or("*");
+            if let Ok(info) = calculate_usage_for_rule(rule, &u.username, model, now).await {
+                enriched_rules.push(info);
+            }
+        }
+
+        Ok(Json(json!({
+            "username": u.username,
+            "limit_to_models": u.limit_to_models,
+            "log_request_body": u.log_request_body,
+            "is_admin": u.is_admin,
+            "expires_at": u.expires_at,
+            "is_expired": u.is_expired(),
+            "rate_limits": enriched_rules,
+        })))
     } else {
         Err((
             StatusCode::NOT_FOUND,
@@ -92,6 +139,22 @@ async fn create_new_user(
             Json(json!({ "error": format!("Failed to create user: {e}") })),
         )
     })?;
+
+    if let Some(rules) = payload.rate_limits {
+        for r in rules {
+            if r.limit_value > 0 {
+                let _ = create_rate_limit(&CreateRateLimitPayload {
+                    user: Some(payload.username.clone()),
+                    token_hash: None,
+                    model: r.model,
+                    time_window: r.time_window,
+                    limit_value: r.limit_value,
+                    unit: r.unit,
+                })
+                .await;
+            }
+        }
+    }
 
     Ok((
         StatusCode::CREATED,
@@ -140,6 +203,23 @@ async fn update_existing_user(
         )
     })?;
 
+    if let Some(rules) = payload.rate_limits {
+        delete_rate_limits_for_user(&username).await.ok();
+        for r in rules {
+            if r.limit_value > 0 {
+                let _ = create_rate_limit(&CreateRateLimitPayload {
+                    user: Some(username.clone()),
+                    token_hash: None,
+                    model: r.model,
+                    time_window: r.time_window,
+                    limit_value: r.limit_value,
+                    unit: r.unit,
+                })
+                .await;
+            }
+        }
+    }
+
     Ok(Json(json!({
         "status": "updated",
         "username": username,
@@ -150,6 +230,7 @@ async fn remove_user(
     _admin: AdminUser,
     Path(username): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    delete_rate_limits_for_user(&username).await.ok();
     let deleted = delete_user(&username).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,

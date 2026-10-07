@@ -653,16 +653,28 @@ pub async fn fetch_admin_users() -> Result<Vec<AdminUserRecord>, String> {
     Ok(wrapper.users)
 }
 
-pub async fn save_admin_user(user: &AdminUserRecord, is_new: bool) -> Result<(), String> {
+pub async fn save_admin_user(
+    user: &AdminUserRecord,
+    rate_limits: Option<&[TokenRateLimitInput]>,
+    is_new: bool,
+) -> Result<(), String> {
     let url = if is_new {
         format!("{}/api/users", get_origin())
     } else {
         format!("{}/api/users/{}", get_origin(), user.username)
     };
+    let payload = serde_json::json!({
+        "username": user.username,
+        "limit_to_models": user.limit_to_models,
+        "log_request_body": user.log_request_body,
+        "is_admin": user.is_admin,
+        "expires_at": user.expires_at,
+        "rate_limits": rate_limits,
+    });
     let req = if is_new {
-        apply_auth(client().post(&url).json(user))
+        apply_auth(client().post(&url).json(&payload))
     } else {
-        apply_auth(client().put(&url).json(user))
+        apply_auth(client().put(&url).json(&payload))
     };
     let res = req.send().await.map_err(|e| e.to_string())?;
     if res.status().is_success() {

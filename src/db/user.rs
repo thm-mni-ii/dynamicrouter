@@ -1,7 +1,7 @@
 use crate::db::connection::get_executor;
 use crate::db::rate_limit::{
     CreateRateLimitPayload, RateLimitRule, create_rate_limit, delete_rate_limits_for_token,
-    get_rate_limits_for_token,
+    delete_rate_limits_for_user, get_rate_limits_for_token,
 };
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -314,6 +314,7 @@ pub async fn create_user(
 }
 
 pub async fn delete_user(username: &str) -> Result<bool, anyhow::Error> {
+    delete_rate_limits_for_user(username).await.ok();
     let res = sqlx::query("DELETE FROM users WHERE username = ?")
         .bind(username)
         .execute(get_executor())

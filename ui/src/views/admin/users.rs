@@ -3,13 +3,46 @@ use crate::api::{
 };
 use crate::components::icons::*;
 use crate::components::{ChipInput, GlassBadge, GlassCard, GlassModal};
-use crate::models::{AdminUserRecord, CreatedTokenResponse};
+use crate::models::{AdminUserRecord, CreatedTokenResponse, TokenRateLimitInput};
 use crate::state::Toast;
 use dioxus::prelude::*;
 use std::collections::HashSet;
 use web_sys::window;
 
 const ONE_WEEK_SECS: i64 = 7 * 24 * 60 * 60;
+
+fn format_count(val: i64) -> String {
+    if val >= 1_000_000_000 {
+        format!("{:.1}B", val as f64 / 1_000_000_000.0)
+    } else if val >= 1_000_000 {
+        format!("{:.1}M", val as f64 / 1_000_000.0)
+    } else if val >= 1_000 {
+        format!("{:.1}K", val as f64 / 1_000.0)
+    } else {
+        val.to_string()
+    }
+}
+
+fn format_unit_short(unit: &str) -> &'static str {
+    match unit {
+        "requests" => "req",
+        "prompt_tokens" => "in-tok",
+        "completion_tokens" => "out-tok",
+        _ => "tok",
+    }
+}
+
+fn format_window_short(window: &str) -> &str {
+    match window {
+        "minute" => "min",
+        "hour" => "hr",
+        "day" => "day",
+        "week" => "wk",
+        "month" => "mo",
+        "permanent" => "total",
+        other => other,
+    }
+}
 
 fn load_users_action(
     mut is_loading: Signal<bool>,
@@ -48,6 +81,7 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
     let mut form_log_body = use_signal(|| true);
     let mut form_models = use_signal(Vec::<String>::new);
     let mut form_expires_at = use_signal(String::new);
+    let mut form_rate_limits = use_signal(Vec::<TokenRateLimitInput>::new);
 
     let _ = use_resource(move || async move {
         load_users_action(is_loading, users, toasts);
@@ -64,6 +98,7 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
         form_log_body.set(true);
         form_models.set(Vec::new());
         form_expires_at.set(String::new());
+        form_rate_limits.set(Vec::new());
 
         editing_user.set(Some((
             AdminUserRecord {
@@ -72,6 +107,7 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                 log_request_body: Some(true),
                 is_admin: false,
                 expires_at: None,
+                rate_limits: Vec::new(),
             },
             true,
         )));
@@ -113,10 +149,13 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
             log_request_body: Some(*form_log_body.read()),
             is_admin: *form_is_admin.read(),
             expires_at,
+            rate_limits: Vec::new(),
         };
 
+        let rate_limits_payload = form_rate_limits.read().clone();
+
         spawn(async move {
-            match save_admin_user(&payload, is_new).await {
+            match save_admin_user(&payload, Some(&rate_limits_payload), is_new).await {
                 Ok(_) => {
                     toasts.write().push(Toast {
                         id: js_sys::Date::now() as u64,
@@ -189,6 +228,27 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
         }
     };
 
+    let add_rate_limit_rule = move |_| {
+        let mut form_rate_limits = form_rate_limits;
+        let mut list = form_rate_limits.read().clone();
+        list.push(TokenRateLimitInput {
+            model: None,
+            time_window: "day".to_string(),
+            limit_value: 100000,
+            unit: Some("tokens".to_string()),
+        });
+        form_rate_limits.set(list);
+    };
+
+    let remove_rate_limit_rule = move |idx: usize| {
+        let mut form_rate_limits = form_rate_limits;
+        let mut list = form_rate_limits.read().clone();
+        if idx < list.len() {
+            list.remove(idx);
+            form_rate_limits.set(list);
+        }
+    };
+
     let now = (js_sys::Date::now() / 1000.0) as i64;
     let show_all = *show_all_users.read();
     let users_list = users.read().clone();
@@ -250,16 +310,17 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                                 th { "Username" }
                                 th { "Role" }
                                 th { "Model Access" }
-                                th { "Payload Logging" }
+                                th { "User Limits" }
+                                th { "Logging" }
                                 th { "Expires" }
-                                th { class: "text-right", "Actions" }
+                                th { class: "text-right whitespace-nowrap", "Actions" }
                             }
                         }
                         tbody {
                             if filtered_users.is_empty() {
                                 tr {
                                     td {
-                                        colspan: 6,
+                                        colspan: 7,
                                         class: "text-muted",
                                         style: "text-align: center; padding: 2rem;",
                                         if *is_loading.read() {
@@ -275,26 +336,62 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                             for user in filtered_users.iter() {
                                 tr {
                                     key: "{user.username}",
-                                    td { span { class: "font-mono font-bold text-sm", "{user.username}" } }
+                                    td {
+                                        span {
+                                            class: "font-mono font-bold text-sm",
+                                            title: "{user.username}",
+                                            style: "max-width: 140px; display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;",
+                                            {
+                                                if user.username.chars().count() > 16 {
+                                                    let truncated: String = user.username.chars().take(16).collect();
+                                                    format!("{truncated}…")
+                                                } else {
+                                                    user.username.clone()
+                                                }
+                                            }
+                                        }
+                                    }
                                     td {
                                         if user.is_admin {
-                                            GlassBadge { variant: "glow", "Administrator" }
+                                            GlassBadge { variant: "glow", "Admin" }
                                         } else {
-                                            GlassBadge { "Standard User" }
+                                            GlassBadge { "User" }
                                         }
                                     }
                                     td {
                                         if let Some(ref m) = user.limit_to_models {
-                                            GlassBadge { variant: "warning", "{m.len()} models allowed" }
+                                            GlassBadge { variant: "warning", "{m.len()} models" }
                                         } else {
-                                            GlassBadge { variant: "success", "Unrestricted (All Models)" }
+                                            GlassBadge { variant: "success", "All Models" }
+                                        }
+                                    }
+                                    td {
+                                        div {
+                                            class: "flex flex-wrap items-center gap-1",
+                                            if user.rate_limits.is_empty() {
+                                                span { class: "text-muted text-xs", "Unlimited" }
+                                            } else {
+                                                for rl in user.rate_limits.iter() {
+                                                    GlassBadge {
+                                                        key: "{rl.id}",
+                                                        span {
+                                                            class: "font-mono text-xs",
+                                                            if let Some(ref m) = rl.model {
+                                                                "{m}: {format_count(rl.used)}/{format_count(rl.limit_value)} {format_unit_short(&rl.unit)}/{format_window_short(&rl.time_window)}"
+                                                            } else {
+                                                                "{format_count(rl.used)}/{format_count(rl.limit_value)} {format_unit_short(&rl.unit)}/{format_window_short(&rl.time_window)}"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                     td {
                                         if user.log_request_body.unwrap_or(true) {
-                                            span { class: "text-xs text-muted", "Enabled" }
+                                            span { class: "text-xs text-muted", "On" }
                                         } else {
-                                            span { class: "text-xs text-dim", "Disabled" }
+                                            span { class: "text-xs text-dim", "Off" }
                                         }
                                     }
                                     td {
@@ -316,11 +413,12 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                                         }
                                     }
                                     td {
-                                        class: "text-right",
+                                        class: "text-right whitespace-nowrap",
                                         div {
-                                            class: "flex items-center justify-end gap-2",
+                                            class: "flex items-center justify-end gap-1.5",
                                             button {
                                                 class: "glass-btn btn-secondary btn-sm",
+                                                style: "padding: 0.3rem 0.6rem;",
                                                 onclick: {
                                                     let un = user.username.clone();
                                                     move |_| on_generate_token_for_user(un.clone())
@@ -330,19 +428,7 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                                             }
                                             button {
                                                 class: "glass-btn btn-secondary btn-sm",
-                                                onclick: {
-                                                    let _un = user.username.clone();
-                                                    move |_| {
-                                                        if let Some(w) = window() {
-                                                            let _ = w.location().set_pathname("/admin/rate-limits");
-                                                        }
-                                                    }
-                                                },
-                                                IconGauge { size: 14 }
-                                                span { "Limits" }
-                                            }
-                                            button {
-                                                class: "glass-btn btn-secondary btn-sm",
+                                                style: "padding: 0.3rem 0.65rem;",
                                                 onclick: {
                                                     let u = user.clone();
                                                     move |_| {
@@ -368,6 +454,18 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                                                             form_expires_at.set(String::new());
                                                         }
 
+                                                        let rl_inputs: Vec<TokenRateLimitInput> = u
+                                                            .rate_limits
+                                                            .iter()
+                                                            .map(|r| TokenRateLimitInput {
+                                                                model: r.model.clone(),
+                                                                time_window: r.time_window.clone(),
+                                                                limit_value: r.limit_value,
+                                                                unit: Some(r.unit.clone()),
+                                                            })
+                                                            .collect();
+                                                        form_rate_limits.set(rl_inputs);
+
                                                         editing_user.set(Some((u.clone(), false)));
                                                     }
                                                 },
@@ -375,6 +473,7 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                                             }
                                             button {
                                                 class: "glass-btn btn-danger btn-sm",
+                                                style: "padding: 0.3rem 0.65rem;",
                                                 onclick: {
                                                     let un = user.username.clone();
                                                     move |_| on_delete_user(un.clone())
@@ -451,6 +550,122 @@ pub fn AdminUsersView(toasts: Signal<Vec<Toast>>) -> Element {
                                 onchange: move |evt| form_log_body.set(evt.checked()),
                             }
                             label { r#for: "user-log-body-check", class: "text-sm", "Log Request / Response Body Payloads" }
+                        }
+
+                        // Dynamic Multi Rate Limits builder
+                        div {
+                            class: "flex flex-col gap-2 pt-2 border-t border-glass-border",
+                            div {
+                                class: "flex items-center justify-between",
+                                label { class: "form-label mb-0 font-bold", "User Rate Limits & Quotas" }
+                                button {
+                                    r#type: "button",
+                                    class: "glass-btn btn-secondary btn-sm",
+                                    onclick: add_rate_limit_rule,
+                                    IconPlus { size: 14 }
+                                    span { "Add Rule" }
+                                }
+                            }
+                            span { class: "form-hint", "Define multi-window rate limits or quotas for this user account (e.g., 100 req/min, 100k tokens/day)." }
+
+                            if form_rate_limits.read().is_empty() {
+                                p { class: "text-xs text-muted italic", "No user-specific rate limits configured (unlimited by default)." }
+                            }
+
+                            for (idx, rl) in form_rate_limits.read().iter().enumerate() {
+                                div {
+                                    key: "{idx}",
+                                    class: "p-2.5 rounded-lg flex flex-col gap-2",
+                                    style: "background: var(--glass-bg-subtle); border: 1px solid var(--glass-border);",
+                                    div {
+                                        class: "grid grid-cols-3 gap-2",
+                                        div {
+                                            label { class: "text-xs text-muted", "Limit Value" }
+                                            input {
+                                                r#type: "number",
+                                                class: "glass-input text-xs",
+                                                value: "{rl.limit_value}",
+                                                oninput: move |evt| {
+                                                    let val = evt.value().parse::<i64>().unwrap_or(0);
+                                                    let mut list = form_rate_limits.read().clone();
+                                                    if let Some(item) = list.get_mut(idx) {
+                                                        item.limit_value = val;
+                                                        form_rate_limits.set(list);
+                                                    }
+                                                },
+                                            }
+                                        }
+                                        div {
+                                            label { class: "text-xs text-muted", "Unit" }
+                                            select {
+                                                class: "glass-input text-xs",
+                                                value: "{rl.unit.as_deref().unwrap_or(\"tokens\")}",
+                                                onchange: move |evt| {
+                                                    let val = evt.value();
+                                                    let mut list = form_rate_limits.read().clone();
+                                                    if let Some(item) = list.get_mut(idx) {
+                                                        item.unit = Some(val);
+                                                        form_rate_limits.set(list);
+                                                    }
+                                                },
+                                                option { value: "tokens", "Total Tokens" }
+                                                option { value: "requests", "Requests" }
+                                                option { value: "prompt_tokens", "Prompt Tokens" }
+                                                option { value: "completion_tokens", "Completion Tokens" }
+                                            }
+                                        }
+                                        div {
+                                            label { class: "text-xs text-muted", "Window" }
+                                            select {
+                                                class: "glass-input text-xs",
+                                                value: "{rl.time_window}",
+                                                onchange: move |evt| {
+                                                    let val = evt.value();
+                                                    let mut list = form_rate_limits.read().clone();
+                                                    if let Some(item) = list.get_mut(idx) {
+                                                        item.time_window = val;
+                                                        form_rate_limits.set(list);
+                                                    }
+                                                },
+                                                option { value: "minute", "Per Minute" }
+                                                option { value: "hour", "Per Hour" }
+                                                option { value: "day", "Per Day" }
+                                                option { value: "week", "Per Week" }
+                                                option { value: "month", "Per Month" }
+                                                option { value: "permanent", "Permanent (Total)" }
+                                            }
+                                        }
+                                    }
+                                    div {
+                                        class: "flex items-center justify-between",
+                                        div {
+                                            class: "flex items-center gap-1",
+                                            label { class: "text-xs text-muted", "Model (optional):" }
+                                            input {
+                                                class: "glass-input text-xs",
+                                                style: "width: 180px; padding: 2px 6px;",
+                                                placeholder: "* (all models)",
+                                                value: "{rl.model.as_deref().unwrap_or_default()}",
+                                                oninput: move |evt| {
+                                                    let v = evt.value().trim().to_string();
+                                                    let mut list = form_rate_limits.read().clone();
+                                                    if let Some(item) = list.get_mut(idx) {
+                                                        item.model = if v.is_empty() || v == "*" { None } else { Some(v) };
+                                                        form_rate_limits.set(list);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        button {
+                                            r#type: "button",
+                                            class: "glass-btn btn-danger btn-sm",
+                                            style: "padding: 2px 6px; font-size: 0.75rem;",
+                                            onclick: move |_| remove_rate_limit_rule(idx),
+                                            "Remove"
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                         div {

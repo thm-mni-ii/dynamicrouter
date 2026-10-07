@@ -11,6 +11,39 @@ use dioxus::prelude::*;
 use std::collections::HashSet;
 use web_sys::window;
 
+fn format_count(val: i64) -> String {
+    if val >= 1_000_000_000 {
+        format!("{:.1}B", val as f64 / 1_000_000_000.0)
+    } else if val >= 1_000_000 {
+        format!("{:.1}M", val as f64 / 1_000_000.0)
+    } else if val >= 1_000 {
+        format!("{:.1}K", val as f64 / 1_000.0)
+    } else {
+        val.to_string()
+    }
+}
+
+fn format_unit_short(unit: &str) -> &'static str {
+    match unit {
+        "requests" => "req",
+        "prompt_tokens" => "in-tok",
+        "completion_tokens" => "out-tok",
+        _ => "tok",
+    }
+}
+
+fn format_window_short(window: &str) -> &str {
+    match window {
+        "minute" => "min",
+        "hour" => "hr",
+        "day" => "day",
+        "week" => "wk",
+        "month" => "mo",
+        "permanent" => "total",
+        other => other,
+    }
+}
+
 fn load_tokens_action(
     mut is_loading: Signal<bool>,
     mut tokens: Signal<Vec<UserToken>>,
@@ -385,16 +418,21 @@ pub fn TokensView(toasts: Signal<Vec<Toast>>) -> Element {
                                     }
                                     td {
                                         div {
-                                            class: "flex flex-col gap-1",
+                                            class: "flex flex-wrap items-center gap-1",
                                             if token.rate_limits.is_empty() {
-                                                span { class: "text-muted text-xs", "No token limits" }
+                                                span { class: "text-muted text-xs", "—" }
                                             } else {
                                                 for rl in token.rate_limits.iter() {
-                                                    span {
+                                                    GlassBadge {
                                                         key: "{rl.id}",
-                                                        class: "text-xs font-mono px-1.5 py-0.5 rounded",
-                                                        style: "background: rgba(59, 130, 246, 0.1); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.2);",
-                                                        "{rl.used}/{rl.limit_value} {rl.unit}/{rl.time_window}"
+                                                        span {
+                                                            class: "font-mono text-xs",
+                                                            if let Some(ref m) = rl.model {
+                                                                "{m}: {format_count(rl.used)}/{format_count(rl.limit_value)} {format_unit_short(&rl.unit)}/{format_window_short(&rl.time_window)}"
+                                                            } else {
+                                                                "{format_count(rl.used)}/{format_count(rl.limit_value)} {format_unit_short(&rl.unit)}/{format_window_short(&rl.time_window)}"
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
@@ -549,8 +587,8 @@ pub fn TokensView(toasts: Signal<Vec<Toast>>) -> Element {
                             for (idx, rl) in form_rate_limits.read().iter().enumerate() {
                                 div {
                                     key: "{idx}",
-                                    class: "p-2 rounded flex flex-col gap-2",
-                                    style: "background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08);",
+                                    class: "p-2.5 rounded-lg flex flex-col gap-2",
+                                    style: "background: var(--glass-bg-subtle); border: 1px solid var(--glass-border);",
                                     div {
                                         class: "grid grid-cols-3 gap-2",
                                         div {
@@ -730,8 +768,8 @@ pub fn TokensView(toasts: Signal<Vec<Toast>>) -> Element {
                             for (idx, rl) in form_rate_limits.read().iter().enumerate() {
                                 div {
                                     key: "{idx}",
-                                    class: "p-2 rounded flex flex-col gap-2",
-                                    style: "background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08);",
+                                    class: "p-2.5 rounded-lg flex flex-col gap-2",
+                                    style: "background: var(--glass-bg-subtle); border: 1px solid var(--glass-border);",
                                     div {
                                         class: "grid grid-cols-3 gap-2",
                                         div {

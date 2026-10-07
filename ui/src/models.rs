@@ -80,6 +80,8 @@ pub struct AdminUserRecord {
     pub log_request_body: Option<bool>,
     pub is_admin: bool,
     pub expires_at: Option<i64>,
+    #[serde(default)]
+    pub rate_limits: Vec<RateLimitUsage>,
 }
 
 // --------------------------------------------------------------------------

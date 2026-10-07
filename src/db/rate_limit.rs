@@ -318,6 +318,34 @@ pub async fn get_rate_limits_for_user(
     Ok(filtered)
 }
 
+pub async fn get_rate_limits_strictly_for_user(
+    username: &str,
+) -> Result<Vec<RateLimitRule>, anyhow::Error> {
+    let rules = sqlx::query_as::<_, RateLimitRule>(
+        r"
+        SELECT id, user, token_hash, model, time_window, limit_value, unit, created_at
+        FROM rate_limits
+        WHERE user = ? AND token_hash IS NULL
+        ORDER BY created_at ASC
+        ",
+    )
+    .bind(username)
+    .fetch_all(get_executor())
+    .await?;
+
+    Ok(rules)
+}
+
+pub async fn delete_rate_limits_for_user(
+    username: &str,
+) -> Result<(), anyhow::Error> {
+    sqlx::query("DELETE FROM rate_limits WHERE user = ? AND token_hash IS NULL")
+        .bind(username)
+        .execute(get_executor())
+        .await?;
+    Ok(())
+}
+
 pub async fn get_matching_token_rate_limits(
     token_hash: &str,
     model_name: &str,
