@@ -264,20 +264,54 @@ pub async fn get_matching_rate_limits(
         SELECT id, user, token_hash, model, time_window, limit_value, unit, created_at
         FROM rate_limits
         WHERE token_hash IS NULL
-          AND (user = ? OR user IS NULL OR user = '*')
         ORDER BY created_at ASC
         ",
     )
-    .bind(username)
     .fetch_all(get_executor())
     .await?;
 
     let filtered = rules
         .into_iter()
-        .filter(|rule| match &rule.model {
+        .filter(|rule| {
+            let user_matches = match &rule.user {
+                None => true,
+                Some(u) if u == "*" || u == username => true,
+                Some(u) => crate::utils::matches_glob(u, username),
+            };
+            if !user_matches {
+                return false;
+            }
+            match &rule.model {
+                None => true,
+                Some(m) if m == "*" || m == model_name => true,
+                Some(m) => crate::utils::matches_glob(m, model_name),
+            }
+        })
+        .collect();
+
+    Ok(filtered)
+}
+
+pub async fn get_rate_limits_for_user(
+    username: &str,
+) -> Result<Vec<RateLimitRule>, anyhow::Error> {
+    let rules = sqlx::query_as::<_, RateLimitRule>(
+        r"
+        SELECT id, user, token_hash, model, time_window, limit_value, unit, created_at
+        FROM rate_limits
+        WHERE token_hash IS NULL
+        ORDER BY created_at ASC
+        ",
+    )
+    .fetch_all(get_executor())
+    .await?;
+
+    let filtered = rules
+        .into_iter()
+        .filter(|rule| match &rule.user {
             None => true,
-            Some(m) if m == "*" || m == model_name => true,
-            Some(m) => crate::utils::matches_glob(m, model_name),
+            Some(u) if u == "*" || u == username => true,
+            Some(u) => crate::utils::matches_glob(u, username),
         })
         .collect();
 
@@ -340,10 +374,84 @@ pub async fn delete_rate_limits_for_token(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum ModelFilter<'a> {
+    Glob(&'a str),
+    Exact(&'a str),
+    Any,
+}
+
+#[derive(Clone, Copy)]
+enum UserOrTokenFilter<'a> {
+    Token(&'a str),
+    UserGlob(&'a str),
+    UserExact(&'a str),
+    Any,
+}
+
+async fn query_request_scalar_i64(
+    column_expr: &str,
+    target: UserOrTokenFilter<'_>,
+    model: ModelFilter<'_>,
+    start_time: i64,
+) -> Option<i64> {
+    let pool = get_executor();
+    match (target, model) {
+        (UserOrTokenFilter::Token(th), ModelFilter::Glob(pat)) => {
+            let q = format!("SELECT {column_expr} FROM request WHERE token_hash = ? AND model GLOB ? AND enqueue >= ?");
+            sqlx::query_scalar(&q).bind(th).bind(pat).bind(start_time).fetch_optional(pool).await.ok().flatten()
+        }
+        (UserOrTokenFilter::Token(th), ModelFilter::Exact(pat)) => {
+            let q = format!("SELECT {column_expr} FROM request WHERE token_hash = ? AND model = ? AND enqueue >= ?");
+            sqlx::query_scalar(&q).bind(th).bind(pat).bind(start_time).fetch_optional(pool).await.ok().flatten()
+        }
+        (UserOrTokenFilter::Token(th), ModelFilter::Any) => {
+            let q = format!("SELECT {column_expr} FROM request WHERE token_hash = ? AND enqueue >= ?");
+            sqlx::query_scalar(&q).bind(th).bind(start_time).fetch_optional(pool).await.ok().flatten()
+        }
+        (UserOrTokenFilter::UserGlob(u), ModelFilter::Glob(pat)) => {
+            let q = format!("SELECT {column_expr} FROM request WHERE user GLOB ? AND model GLOB ? AND enqueue >= ?");
+            sqlx::query_scalar(&q).bind(u).bind(pat).bind(start_time).fetch_optional(pool).await.ok().flatten()
+        }
+        (UserOrTokenFilter::UserGlob(u), ModelFilter::Exact(pat)) => {
+            let q = format!("SELECT {column_expr} FROM request WHERE user GLOB ? AND model = ? AND enqueue >= ?");
+            sqlx::query_scalar(&q).bind(u).bind(pat).bind(start_time).fetch_optional(pool).await.ok().flatten()
+        }
+        (UserOrTokenFilter::UserGlob(u), ModelFilter::Any) => {
+            let q = format!("SELECT {column_expr} FROM request WHERE user GLOB ? AND enqueue >= ?");
+            sqlx::query_scalar(&q).bind(u).bind(start_time).fetch_optional(pool).await.ok().flatten()
+        }
+        (UserOrTokenFilter::UserExact(u), ModelFilter::Glob(pat)) => {
+            let q = format!("SELECT {column_expr} FROM request WHERE user = ? AND model GLOB ? AND enqueue >= ?");
+            sqlx::query_scalar(&q).bind(u).bind(pat).bind(start_time).fetch_optional(pool).await.ok().flatten()
+        }
+        (UserOrTokenFilter::UserExact(u), ModelFilter::Exact(pat)) => {
+            let q = format!("SELECT {column_expr} FROM request WHERE user = ? AND model = ? AND enqueue >= ?");
+            sqlx::query_scalar(&q).bind(u).bind(pat).bind(start_time).fetch_optional(pool).await.ok().flatten()
+        }
+        (UserOrTokenFilter::UserExact(u), ModelFilter::Any) => {
+            let q = format!("SELECT {column_expr} FROM request WHERE user = ? AND enqueue >= ?");
+            sqlx::query_scalar(&q).bind(u).bind(start_time).fetch_optional(pool).await.ok().flatten()
+        }
+        (UserOrTokenFilter::Any, ModelFilter::Glob(pat)) => {
+            let q = format!("SELECT {column_expr} FROM request WHERE model GLOB ? AND enqueue >= ?");
+            sqlx::query_scalar(&q).bind(pat).bind(start_time).fetch_optional(pool).await.ok().flatten()
+        }
+        (UserOrTokenFilter::Any, ModelFilter::Exact(pat)) => {
+            let q = format!("SELECT {column_expr} FROM request WHERE model = ? AND enqueue >= ?");
+            sqlx::query_scalar(&q).bind(pat).bind(start_time).fetch_optional(pool).await.ok().flatten()
+        }
+        (UserOrTokenFilter::Any, ModelFilter::Any) => {
+            let q = format!("SELECT {column_expr} FROM request WHERE enqueue >= ?");
+            sqlx::query_scalar(&q).bind(start_time).fetch_optional(pool).await.ok().flatten()
+        }
+    }
+}
+
 pub async fn calculate_usage_for_rule(
     rule: &RateLimitRule,
     username: &str,
-    model_name: &str,
+    _model_name: &str,
     now: i64,
 ) -> Result<RateLimitUsageInfo, anyhow::Error> {
     let duration = window_duration_seconds(&rule.time_window);
@@ -352,12 +460,44 @@ pub async fn calculate_usage_for_rule(
         None => 0, // permanent / lifetime
     };
 
-    let target_user = username;
-    let is_model_specific = rule.model.as_ref().is_some_and(|m| m != "*" && !m.is_empty());
-    let target_model = if is_model_specific {
-        rule.model.as_deref().unwrap_or(model_name)
+    let target_user = username.trim();
+
+    let model_filter = match &rule.model {
+        Some(m) if m != "*" && !m.trim().is_empty() => {
+            let trimmed = m.trim();
+            if crate::utils::is_glob_pattern(trimmed) {
+                ModelFilter::Glob(trimmed)
+            } else {
+                ModelFilter::Exact(trimmed)
+            }
+        }
+        _ => ModelFilter::Any,
+    };
+
+    let target_filter = if let Some(ref th) = rule.token_hash {
+        UserOrTokenFilter::Token(th.trim())
+    } else if !target_user.is_empty() && target_user != "*" {
+        if let Some(ref u) = rule.user {
+            let u_trim = u.trim();
+            if crate::utils::is_glob_pattern(u_trim) {
+                UserOrTokenFilter::UserGlob(u_trim)
+            } else {
+                UserOrTokenFilter::UserExact(target_user)
+            }
+        } else {
+            UserOrTokenFilter::UserExact(target_user)
+        }
+    } else if let Some(ref u) = rule.user {
+        let u_trim = u.trim();
+        if u_trim.is_empty() || u_trim == "*" {
+            UserOrTokenFilter::Any
+        } else if crate::utils::is_glob_pattern(u_trim) {
+            UserOrTokenFilter::UserGlob(u_trim)
+        } else {
+            UserOrTokenFilter::UserExact(u_trim)
+        }
     } else {
-        model_name
+        UserOrTokenFilter::Any
     };
 
     let column_expr = match rule.unit.as_str() {
@@ -367,96 +507,15 @@ pub async fn calculate_usage_for_rule(
         _ => "COALESCE(SUM(total_tokens), 0)",
     };
 
-    let used: i64 = if let Some(ref th) = rule.token_hash {
-        if is_model_specific {
-            let query = format!(
-                "SELECT {column_expr} FROM request WHERE token_hash = ? AND model = ? AND enqueue >= ?"
-            );
-            sqlx::query_scalar(&query)
-                .bind(th)
-                .bind(target_model)
-                .bind(start_time)
-                .fetch_one(get_executor())
-                .await
-                .unwrap_or(0)
-        } else {
-            let query = format!(
-                "SELECT {column_expr} FROM request WHERE token_hash = ? AND enqueue >= ?"
-            );
-            sqlx::query_scalar(&query)
-                .bind(th)
-                .bind(start_time)
-                .fetch_one(get_executor())
-                .await
-                .unwrap_or(0)
-        }
-    } else if is_model_specific {
-        let query = format!(
-            "SELECT {column_expr} FROM request WHERE user = ? AND model = ? AND enqueue >= ?"
-        );
-        sqlx::query_scalar(&query)
-            .bind(target_user)
-            .bind(target_model)
-            .bind(start_time)
-            .fetch_one(get_executor())
-            .await
-            .unwrap_or(0)
-    } else {
-        let query = format!(
-            "SELECT {column_expr} FROM request WHERE user = ? AND enqueue >= ?"
-        );
-        sqlx::query_scalar(&query)
-            .bind(target_user)
-            .bind(start_time)
-            .fetch_one(get_executor())
-            .await
-            .unwrap_or(0)
-    };
+    let used: i64 = query_request_scalar_i64(column_expr, target_filter, model_filter, start_time)
+        .await
+        .unwrap_or(0);
 
     let remaining = (rule.limit_value - used).max(0);
 
     let (reset_in_seconds, reset_timestamp) = if let Some(dur) = duration {
-        let oldest_in_window: Option<i64> = if let Some(ref th) = rule.token_hash {
-            if is_model_specific {
-                sqlx::query_scalar(
-                    "SELECT MIN(enqueue) FROM request WHERE token_hash = ? AND model = ? AND enqueue >= ?",
-                )
-                .bind(th)
-                .bind(target_model)
-                .bind(start_time)
-                .fetch_optional(get_executor())
-                .await
-                .unwrap_or(None)
-            } else {
-                sqlx::query_scalar(
-                    "SELECT MIN(enqueue) FROM request WHERE token_hash = ? AND enqueue >= ?",
-                )
-                .bind(th)
-                .bind(start_time)
-                .fetch_optional(get_executor())
-                .await
-                .unwrap_or(None)
-            }
-        } else if is_model_specific {
-            sqlx::query_scalar(
-                "SELECT MIN(enqueue) FROM request WHERE user = ? AND model = ? AND enqueue >= ?",
-            )
-            .bind(target_user)
-            .bind(target_model)
-            .bind(start_time)
-            .fetch_optional(get_executor())
-            .await
-            .unwrap_or(None)
-        } else {
-            sqlx::query_scalar(
-                "SELECT MIN(enqueue) FROM request WHERE user = ? AND enqueue >= ?",
-            )
-            .bind(target_user)
-            .bind(start_time)
-            .fetch_optional(get_executor())
-            .await
-            .unwrap_or(None)
-        };
+        let oldest_in_window: Option<i64> =
+            query_request_scalar_i64("MIN(enqueue)", target_filter, model_filter, start_time).await;
 
         if let Some(oldest) = oldest_in_window {
             let reset_ts = oldest + dur;

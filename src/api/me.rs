@@ -5,6 +5,7 @@ use crate::db::model::{ModelHandlerConfig, get_all_models};
 use crate::db::openai_api::get_all_openai_apis;
 use crate::db::rate_limit::{
     RateLimitUsageInfo, calculate_usage_for_rule, get_matching_rate_limits,
+    get_rate_limits_for_user,
 };
 use crate::db::request::{
     RequestFilter, get_batch_models_live_stats, get_requests, get_user_metrics,
@@ -186,7 +187,7 @@ async fn delete_token(
 async fn get_my_rate_limits(
     user: AuthUser,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let rules = get_matching_rate_limits(&user.username, "*")
+    let rules = get_rate_limits_for_user(&user.username)
         .await
         .map_err(|e| {
             (
