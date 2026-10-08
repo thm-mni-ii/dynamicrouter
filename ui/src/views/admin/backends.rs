@@ -46,7 +46,7 @@ pub fn AdminBackendsView(toasts: Signal<Vec<Toast>>) -> Element {
     let mut form_quants = use_signal(Vec::<String>::new);
 
     // Form inputs for Model Config
-    let mut editing_model_cfg = use_signal(|| Option::<BackendModelRecord>::None);
+    let mut editing_model_cfg = use_signal(|| Option::<(BackendModelRecord, bool)>::None);
     let mut form_model_name = use_signal(Vec::<String>::new);
     let mut form_model_args = use_signal(Vec::<String>::new);
     let mut form_model_ctx = use_signal(String::new);
@@ -172,6 +172,11 @@ pub fn AdminBackendsView(toasts: Signal<Vec<Toast>>) -> Element {
     };
 
     let save_model_cfg = move |_| {
+        let (existing_cfg, is_new) = match editing_model_cfg.read().clone() {
+            Some(pair) => pair,
+            None => return,
+        };
+
         let b_id = selected_backend_for_models.read().clone().unwrap_or_default();
         let model = form_model_name.read().first().cloned().unwrap_or_default().trim().to_string();
         if model.is_empty() || b_id.is_empty() {
@@ -180,21 +185,30 @@ pub fn AdminBackendsView(toasts: Signal<Vec<Toast>>) -> Element {
 
         let args = form_model_args.read().clone();
         let ctx = form_model_ctx.read().trim().parse::<u64>().ok();
+        let env = if is_new {
+            HashMap::new()
+        } else {
+            existing_cfg.environment_variables
+        };
 
         let payload = BackendModelRecord {
             backend_id: b_id.clone(),
             model,
             arguments: args,
-            environment_variables: HashMap::new(),
+            environment_variables: env,
             ctx_length: ctx,
         };
 
         spawn(async move {
-            match save_admin_backend_model(&payload).await {
+            match save_admin_backend_model(&payload, is_new).await {
                 Ok(_) => {
                     toasts.write().push(Toast {
                         id: js_sys::Date::now() as u64,
-                        message: "Backend model arguments saved.".to_string(),
+                        message: if is_new {
+                            "Backend model arguments saved.".to_string()
+                        } else {
+                            "Backend model arguments updated.".to_string()
+                        },
                         is_error: false,
                     });
                     editing_model_cfg.set(None);
@@ -364,13 +378,16 @@ pub fn AdminBackendsView(toasts: Signal<Vec<Toast>>) -> Element {
                                         form_model_name.set(Vec::new());
                                         form_model_args.set(Vec::new());
                                         form_model_ctx.set(String::new());
-                                        editing_model_cfg.set(Some(BackendModelRecord {
-                                            backend_id: b_id_clone.clone(),
-                                            model: String::new(),
-                                            arguments: Vec::new(),
-                                            environment_variables: HashMap::new(),
-                                            ctx_length: None,
-                                        }));
+                                        editing_model_cfg.set(Some((
+                                            BackendModelRecord {
+                                                backend_id: b_id_clone.clone(),
+                                                model: String::new(),
+                                                arguments: Vec::new(),
+                                                environment_variables: HashMap::new(),
+                                                ctx_length: None,
+                                            },
+                                            true,
+                                        )));
                                     }
                                 },
                                 IconPlus { size: 14 }
@@ -415,13 +432,29 @@ pub fn AdminBackendsView(toasts: Signal<Vec<Toast>>) -> Element {
                                         td { span { class: "text-sm", "{cfg.ctx_length.map(|c| c.to_string()).unwrap_or(\"Default\".to_string())}" } }
                                         td {
                                             class: "text-right",
-                                            button {
-                                                class: "glass-btn btn-danger btn-sm",
-                                                onclick: {
-                                                    let m = cfg.model.clone();
-                                                    move |_| delete_model_cfg(m.clone())
-                                                },
-                                                "Remove"
+                                            div {
+                                                class: "flex items-center justify-end gap-2",
+                                                button {
+                                                    class: "glass-btn btn-secondary btn-sm",
+                                                    onclick: {
+                                                        let cfg = cfg.clone();
+                                                        move |_| {
+                                                            form_model_name.set(vec![cfg.model.clone()]);
+                                                            form_model_args.set(cfg.arguments.clone());
+                                                            form_model_ctx.set(cfg.ctx_length.map(|c| c.to_string()).unwrap_or_default());
+                                                            editing_model_cfg.set(Some((cfg.clone(), false)));
+                                                        }
+                                                    },
+                                                    "Edit"
+                                                }
+                                                button {
+                                                    class: "glass-btn btn-danger btn-sm",
+                                                    onclick: {
+                                                        let m = cfg.model.clone();
+                                                        move |_| delete_model_cfg(m.clone())
+                                                    },
+                                                    "Remove"
+                                                }
                                             }
                                         }
                                     }
@@ -504,9 +537,13 @@ pub fn AdminBackendsView(toasts: Signal<Vec<Toast>>) -> Element {
             }
 
             // Model Cfg Modal
-            if let Some(_) = editing_model_cfg.read().clone() {
+            if let Some((_, is_new)) = editing_model_cfg.read().clone() {
                 GlassModal {
-                    title: "Add Backend Model Arguments".to_string(),
+                    title: if is_new {
+                        "Add Backend Model Arguments".to_string()
+                    } else {
+                        format!("Edit Model Arguments: {}", form_model_name.read().first().cloned().unwrap_or_default())
+                    },
                     on_close: move |_| editing_model_cfg.set(None),
                     div {
                         class: "flex flex-col gap-3",
@@ -518,6 +555,7 @@ pub fn AdminBackendsView(toasts: Signal<Vec<Toast>>) -> Element {
                                 values: form_model_name,
                                 suggestions: model_suggestions.read().clone(),
                                 max_items: Some(1),
+                                disabled: !is_new,
                                 placeholder: "Select or enter model ID...",
                             }
                         }

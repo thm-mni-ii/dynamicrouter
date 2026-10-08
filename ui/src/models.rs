@@ -203,7 +203,8 @@ pub struct BackendRecord {
     pub use_for: BackendUseFor,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
 pub struct BackendModelRecord {
     pub backend_id: String,
     pub model: String,

@@ -24,6 +24,7 @@ pub struct BackendRecord {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct BackendModelRecord {
     pub backend_id: String,
     pub model: String,

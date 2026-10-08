@@ -614,9 +614,17 @@ pub async fn fetch_admin_backend_models(backend_id: &str) -> Result<Vec<BackendM
     Ok(wrapper.models)
 }
 
-pub async fn save_admin_backend_model(model: &BackendModelRecord) -> Result<(), String> {
-    let url = format!("{}/api/backends/{}/models", get_origin(), model.backend_id);
-    let req = apply_auth(client().post(&url).json(model));
+pub async fn save_admin_backend_model(model: &BackendModelRecord, is_new: bool) -> Result<(), String> {
+    let url = if is_new {
+        format!("{}/api/backends/{}/models", get_origin(), model.backend_id)
+    } else {
+        format!("{}/api/backends/{}/models/{}", get_origin(), model.backend_id, model.model)
+    };
+    let req = if is_new {
+        apply_auth(client().post(&url).json(model))
+    } else {
+        apply_auth(client().put(&url).json(model))
+    };
     let res = req.send().await.map_err(|e| e.to_string())?;
     if res.status().is_success() {
         Ok(())
