@@ -1778,3 +1778,310 @@ html, body {
   color: var(--text-dim);
 }
 
+/* ==========================================================================
+   Model Selector Component (Glassmorphic Searchable Dropdown)
+   ========================================================================== */
+.model-selector-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.model-selector-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.55rem 0.85rem;
+  min-height: 46px;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 11px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  user-select: none;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.model-selector-trigger:hover,
+.model-selector-trigger:focus-visible {
+  border-color: var(--glass-border-focus);
+  box-shadow: 0 0 0 3px rgba(var(--glow-rgb), 0.15);
+}
+
+.model-selector-trigger.active {
+  border-color: var(--glow-primary);
+  box-shadow: 0 0 0 3px rgba(var(--glow-rgb), 0.22);
+}
+
+.model-selector-trigger.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.model-selector-trigger-content {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+}
+
+.model-selector-name {
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.25;
+}
+
+.model-selector-id {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.1;
+}
+
+.model-selector-chevron {
+  color: var(--text-muted);
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  align-items: center;
+}
+
+.model-selector-chevron.open {
+  transform: rotate(180deg);
+  color: var(--glow-primary);
+}
+
+.model-selector-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  background: transparent;
+}
+
+.model-selector-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  min-width: 320px;
+  z-index: 150;
+  background: var(--glass-bg);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border: 1px solid var(--glass-border-hover);
+  border-radius: 12px;
+  box-shadow: var(--glass-shadow-lg), 0 16px 40px rgba(0, 0, 0, 0.45);
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  animation: fadeInDown 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  box-sizing: border-box;
+}
+
+.model-selector-search-box {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.65rem;
+  background: var(--glass-bg-subtle);
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  transition: border-color var(--transition-fast);
+}
+
+.model-selector-search-box:focus-within {
+  border-color: var(--glass-border-focus);
+}
+
+.model-selector-search-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 0.825rem;
+  color: var(--text-main);
+  font-family: var(--font-sans);
+}
+
+.model-selector-search-input::placeholder {
+  color: var(--text-dim);
+}
+
+.model-selector-clear-btn {
+  background: none;
+  border: none;
+  padding: 2px;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  transition: color var(--transition-fast);
+}
+
+.model-selector-clear-btn:hover {
+  color: var(--text-main);
+}
+
+.model-selector-filter-pills {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  padding: 0 0.1rem;
+}
+
+.selector-pill {
+  padding: 0.18rem 0.5rem;
+  font-size: 0.72rem;
+  border-radius: 6px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg-subtle);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  user-select: none;
+}
+
+.selector-pill:hover {
+  background: var(--glass-bg-hover);
+  color: var(--text-main);
+}
+
+.selector-pill.active {
+  background: var(--glow-surface);
+  border-color: rgba(var(--glow-rgb), 0.3);
+  color: var(--glow-primary);
+  font-weight: 600;
+}
+
+.model-selector-options-list {
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 2px;
+}
+
+.model-selector-options-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.model-selector-options-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.model-selector-options-list::-webkit-scrollbar-thumb {
+  background: var(--glass-border-hover);
+  border-radius: 4px;
+}
+
+.model-selector-empty {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.model-selector-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  border: 1px solid transparent;
+  user-select: none;
+}
+
+.model-selector-option:hover,
+.model-selector-option.highlighted {
+  background: var(--glass-bg-hover);
+  color: var(--text-main);
+}
+
+.model-selector-option.selected {
+  background: var(--glow-surface);
+  border-color: rgba(var(--glow-rgb), 0.25);
+}
+
+.model-option-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.model-option-name {
+  font-size: 0.825rem;
+  font-weight: 600;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-option-id {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-option-meta-badge {
+  font-size: 0.65rem;
+  font-family: var(--font-mono);
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  background: var(--badge-bg);
+  border: 1px solid var(--badge-border);
+  color: var(--text-dim);
+}
+
+.model-option-status {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.model-option-check {
+  color: var(--glow-primary);
+  display: flex;
+  align-items: center;
+}
+
+.status-dot-running {
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+}
+
+.status-dot-upstream {
+  background: #a855f7;
+  box-shadow: 0 0 6px rgba(168, 85, 247, 0.6);
+}
+
+.status-dot-cold {
+  background: #64748b;
+  box-shadow: none;
+}
+
+

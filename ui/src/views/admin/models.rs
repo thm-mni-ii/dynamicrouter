@@ -289,7 +289,13 @@ pub fn AdminModelsView(toasts: Signal<Vec<Toast>>) -> Element {
                                     td {
                                         match &model.handler {
                                             ModelHandlerConfig::Spawner(_) => rsx! { GlassBadge { variant: "glow", "Spawner" } },
-                                            ModelHandlerConfig::OpenAi(_) => rsx! { GlassBadge { "OpenAI Upstream" } },
+                                            ModelHandlerConfig::OpenAi(oa) => rsx! {
+                                                if let Some(ref api) = oa.api {
+                                                    GlassBadge { variant: "primary", "🟣 Cloud API ({api})" }
+                                                } else {
+                                                    GlassBadge { variant: "primary", "🟣 Cloud API" }
+                                                }
+                                            },
                                         }
                                     }
                                     td {

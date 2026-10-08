@@ -593,3 +593,22 @@ pub fn IconClock(#[props(default = 16)] size: u32, #[props(into, default)] class
         }
     }
 }
+
+#[component]
+pub fn IconSearch(#[props(default = 16)] size: u32, #[props(into, default)] class: String) -> Element {
+    rsx! {
+        svg {
+            class: "icon {class}",
+            width: "{size}",
+            height: "{size}",
+            view_box: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            stroke_width: "2",
+            stroke_linecap: "round",
+            stroke_linejoin: "round",
+            circle { cx: "11", cy: "11", r: "8" }
+            line { x1: "21", y1: "21", x2: "16.65", y2: "16.65" }
+        }
+    }
+}

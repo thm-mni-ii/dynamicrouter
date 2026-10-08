@@ -333,7 +333,9 @@ pub struct RateLimitUsage {
     pub time_window: String,
     pub limit_value: i64,
     pub unit: String,
+    #[serde(default)]
     pub used: i64,
+    #[serde(default)]
     pub remaining: i64,
     pub reset_in_seconds: Option<i64>,
     pub reset_timestamp: Option<i64>,

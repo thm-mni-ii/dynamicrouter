@@ -74,7 +74,13 @@ pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusC
             for m in api_models {
                 let full_id = if let Some(prefix) = &api_conf.prefix {
                     let p = prefix.trim_end_matches('/');
-                    format!("{p}/{m}")
+                    if m.starts_with(&format!("{p}/")) {
+                        m.clone()
+                    } else if m == p {
+                        m.clone()
+                    } else {
+                        format!("{p}/{m}")
+                    }
                 } else {
                     m.clone()
                 };

@@ -149,13 +149,15 @@ impl OpenAiApiRecord {
     pub fn map_model_name(&self, model_name: &str) -> String {
         if let Some(prefix) = &self.prefix {
             let p = prefix.trim_end_matches('/');
-            if let Some(stripped) = model_name.strip_prefix(prefix.as_str()) {
-                stripped.trim_start_matches('/').to_string()
-            } else if let Some(stripped) = model_name.strip_prefix(p) {
-                stripped.trim_start_matches('/').to_string()
-            } else {
-                model_name.to_string()
+            let mut current = model_name;
+            while let Some(stripped) = current.strip_prefix(prefix.as_str()).or_else(|| current.strip_prefix(p)) {
+                let trimmed = stripped.trim_start_matches('/');
+                if trimmed == current || trimmed.is_empty() {
+                    break;
+                }
+                current = trimmed;
             }
+            current.to_string()
         } else {
             model_name.to_string()
         }
@@ -302,5 +304,9 @@ pub async fn delete_openai_api(id: &str) -> Result<bool, anyhow::Error> {
         .bind(id)
         .execute(get_executor())
         .await?;
+    let _ = sqlx::query("DELETE FROM instance WHERE id LIKE ?")
+        .bind(format!("openai:{id}%"))
+        .execute(get_executor())
+        .await;
     Ok(res.rows_affected() > 0)
 }

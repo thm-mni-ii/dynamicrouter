@@ -1,6 +1,6 @@
 use crate::api::{fetch_my_models, send_chat_completion, send_chat_completion_stream};
 use crate::components::icons::*;
-use crate::components::{GlassBadge, GlassCard};
+use crate::components::{GlassBadge, GlassCard, ModelSelector};
 use crate::models::{ChatCompletionRequest, ChatMessage, UserModelStatus};
 use dioxus::prelude::*;
 
@@ -180,20 +180,10 @@ pub fn ChatView() -> Element {
                         div {
                             class: "form-group",
                             label { class: "form-label", "Target Model" }
-                            select {
-                                class: "glass-select",
-                                value: "{selected_model.read()}",
-                                onchange: move |evt| selected_model.set(evt.value()),
-                                if models.read().is_empty() {
-                                    option { value: "", "Loading models..." }
-                                }
-                                for m in models.read().iter() {
-                                    option {
-                                        key: "{m.id}",
-                                        value: "{m.id}",
-                                        "{m.name}"
-                                    }
-                                }
+                            ModelSelector {
+                                models: models,
+                                selected_model: selected_model,
+                                disabled: *is_loading.read(),
                             }
                         }
 

@@ -20,6 +20,11 @@ pub async fn init_db() {
             }
             let _ = DB.set(db);
             let _ = crate::db::request::cleanup_stale_queued_requests().await;
+            let _ = sqlx::query(
+                "DELETE FROM instance WHERE id LIKE 'openai:%' AND substr(id, 8) NOT IN (SELECT id FROM openai_apis)"
+            )
+            .execute(get_executor())
+            .await;
             if let Err(err) = crate::db::legacy_migration::check_and_migrate_legacy_config().await {
                 eprintln!("Error during legacy config migration: {err}");
                 fatal!("Error during legacy config migration: {err}");

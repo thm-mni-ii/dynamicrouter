@@ -160,7 +160,26 @@ pub fn AdminOpenAiApisView(toasts: Signal<Vec<Toast>>) -> Element {
         let models = if form_models.read().is_empty() {
             None
         } else {
-            Some(form_models.read().iter().cloned().collect::<HashSet<_>>())
+            let p_clean = prefix.as_deref().map(|p| p.trim_end_matches('/'));
+            let cleaned: HashSet<String> = form_models
+                .read()
+                .iter()
+                .map(|m| {
+                    let mut s = m.trim().to_string();
+                    if let Some(p) = p_clean {
+                        while let Some(stripped) = s.strip_prefix(&format!("{p}/")).or_else(|| s.strip_prefix(p)) {
+                            let next = stripped.trim_start_matches('/').to_string();
+                            if next == s || next.is_empty() {
+                                break;
+                            }
+                            s = next;
+                        }
+                    }
+                    s
+                })
+                .filter(|s| !s.is_empty())
+                .collect();
+            if cleaned.is_empty() { None } else { Some(cleaned) }
         };
 
         let payload = OpenAiApiRecord {

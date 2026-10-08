@@ -305,6 +305,29 @@ async fn create_user_token(
             )
         })?;
 
+    let now = Utc::now().timestamp();
+    let mut enriched_rules = Vec::new();
+    for rule in &user_token.rate_limits {
+        let model = rule.model.as_deref().unwrap_or("*");
+        if let Ok(info) = calculate_usage_for_rule(rule, &username, model, now).await {
+            enriched_rules.push(info);
+        } else {
+            enriched_rules.push(crate::db::rate_limit::RateLimitUsageInfo {
+                id: rule.id.clone(),
+                user: rule.user.clone(),
+                token_hash: rule.token_hash.clone(),
+                model: rule.model.clone(),
+                time_window: rule.time_window.clone(),
+                limit_value: rule.limit_value,
+                unit: rule.unit.clone(),
+                used: 0,
+                remaining: rule.limit_value,
+                reset_in_seconds: None,
+                reset_timestamp: None,
+            });
+        }
+    }
+
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -319,7 +342,7 @@ async fn create_user_token(
                 "limit_to_models": user_token.limit_to_models,
                 "expires_at": user_token.expires_at,
                 "allowed_ips": user_token.allowed_ips,
-                "rate_limits": user_token.rate_limits,
+                "rate_limits": enriched_rules,
                 "created_at": user_token.created_at,
             },
             "message": "Token generated. Store this token securely as it will not be displayed again.",
