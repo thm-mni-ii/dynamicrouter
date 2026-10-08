@@ -61,6 +61,7 @@ async fn get_single_request_log(
             "model": req.model,
             "enqueue": req.enqueue,
             "done": req.done,
+            "status": req.status.as_str(),
             "duration_secs": req.done.map(|d| d - req.enqueue),
             "instance": req.instance,
             "user": req.user,

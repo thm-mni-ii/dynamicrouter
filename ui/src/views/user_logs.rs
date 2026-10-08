@@ -3,7 +3,7 @@ use crate::components::icons::*;
 use crate::components::{
     CodeBlock, GlassAutocompleteInput, GlassBadge, GlassCard, GlassModal,
 };
-use crate::models::{PaginatedRequests, RequestLog};
+use crate::models::{PaginatedRequests, RequestLog, RequestStatus};
 use dioxus::prelude::*;
 
 fn format_timestamp(ts: i64) -> String {
@@ -134,10 +134,19 @@ pub fn UserLogsView() -> Element {
                                             }
                                         }
                                         td {
-                                            if req.done.is_some() {
-                                                GlassBadge { variant: "success", "Completed" }
-                                            } else {
-                                                GlassBadge { variant: "warning", pulse: true, "Pending" }
+                                            match req.status {
+                                                Some(RequestStatus::Completed) => rsx! { GlassBadge { variant: "success", "Completed" } },
+                                                Some(RequestStatus::Failed) => rsx! { GlassBadge { variant: "danger", "Failed" } },
+                                                Some(RequestStatus::Aborted) => rsx! { GlassBadge { variant: "warning", "Aborted" } },
+                                                Some(RequestStatus::Unknown) => rsx! { GlassBadge { variant: "neutral", "Unknown" } },
+                                                Some(RequestStatus::Queued) => rsx! { GlassBadge { variant: "primary", pulse: true, "Queued" } },
+                                                None => {
+                                                    if req.done.is_some() {
+                                                        rsx! { GlassBadge { variant: "success", "Completed" } }
+                                                    } else {
+                                                        rsx! { GlassBadge { variant: "warning", pulse: true, "Pending" } }
+                                                    }
+                                                }
                                             }
                                         }
                                         td {
@@ -189,8 +198,10 @@ pub fn UserLogsView() -> Element {
                                 span { class: "text-sm font-bold", 
                                     if let Some(done) = req.done {
                                         "{done - req.enqueue}s"
-                                    } else {
+                                    } else if req.status == Some(RequestStatus::Queued) {
                                         "In Flight"
+                                    } else {
+                                        "—"
                                     }
                                 }
                             }

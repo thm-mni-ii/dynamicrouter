@@ -19,6 +19,7 @@ pub async fn init_db() {
                 fatal!("Error while running migrations: {err}");
             }
             let _ = DB.set(db);
+            let _ = crate::db::request::cleanup_stale_queued_requests().await;
             if let Err(err) = crate::db::legacy_migration::check_and_migrate_legacy_config().await {
                 eprintln!("Error during legacy config migration: {err}");
                 fatal!("Error during legacy config migration: {err}");

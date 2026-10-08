@@ -84,6 +84,37 @@ impl IntoResponse for ModelResponse {
     }
 }
 
+pub struct RequestGuard {
+    request_id: String,
+    completed: bool,
+}
+
+impl RequestGuard {
+    pub fn new(request_id: String) -> Self {
+        Self {
+            request_id,
+            completed: false,
+        }
+    }
+
+    pub fn mark_completed(&mut self) {
+        self.completed = true;
+    }
+}
+
+impl Drop for RequestGuard {
+    fn drop(&mut self) {
+        if !self.completed {
+            let id = self.request_id.clone();
+            tokio::spawn(async move {
+                if let Err(e) = crate::db::request::request_aborted(&id).await {
+                    error!("Failed to mark aborted request {id}: {e}");
+                }
+            });
+        }
+    }
+}
+
 pub struct ResponseLogger {
     pub id: String,
     pub prompt_tokens: i64,

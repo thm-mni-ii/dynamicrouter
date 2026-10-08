@@ -3,6 +3,51 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "TEXT", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum RequestStatus {
+    Queued,
+    Completed,
+    Failed,
+    Aborted,
+    Unknown,
+}
+
+impl RequestStatus {
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RequestStatus::Queued => "queued",
+            RequestStatus::Completed => "completed",
+            RequestStatus::Failed => "failed",
+            RequestStatus::Aborted => "aborted",
+            RequestStatus::Unknown => "unknown",
+        }
+    }
+}
+
+impl std::fmt::Display for RequestStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl std::str::FromStr for RequestStatus {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "queued" | "pending" => Ok(RequestStatus::Queued),
+            "completed" | "done" => Ok(RequestStatus::Completed),
+            "failed" | "error" => Ok(RequestStatus::Failed),
+            "aborted" | "cancelled" | "canceled" => Ok(RequestStatus::Aborted),
+            "unknown" => Ok(RequestStatus::Unknown),
+            _ => anyhow::bail!("Invalid request status: {s}"),
+        }
+    }
+}
+
 #[derive(sqlx::FromRow, Debug, Clone, Serialize, Deserialize)]
 #[allow(clippy::struct_field_names)]
 pub struct Request {
@@ -10,6 +55,7 @@ pub struct Request {
     pub model: String,
     pub enqueue: i64,
     pub done: Option<i64>,
+    pub status: RequestStatus,
     pub instance: String,
     pub user: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -41,6 +87,8 @@ pub struct RequestLog {
     pub model: String,
     pub enqueue: i64,
     pub done: Option<i64>,
+    #[serde(default)]
+    pub status: Option<RequestStatus>,
     pub user: Option<String>,
     pub instance: Option<String>,
     pub request_body: Option<serde_json::Value>,
@@ -107,10 +155,12 @@ pub struct TimeseriesPoint {
 }
 
 pub async fn count_pending_requests_for(model: &str) -> Result<i64, anyhow::Error> {
+    let cutoff = Utc::now().timestamp() - i64::from(crate::config::CONFIG.model_timeout);
     let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT id) FROM request WHERE model = ? AND done IS NULL",
+        "SELECT COUNT(DISTINCT id) FROM request WHERE model = ? AND status = 'queued' AND enqueue >= ?",
     )
     .bind(model)
+    .bind(cutoff)
     .fetch_one(get_executor())
     .await?;
     Ok(count)
@@ -118,7 +168,7 @@ pub async fn count_pending_requests_for(model: &str) -> Result<i64, anyhow::Erro
 
 pub async fn latest_for_each_model() -> Result<Vec<Request>, anyhow::Error> {
     Ok(sqlx::query_as::<_, Request>(
-        "SELECT id, model, MAX(enqueue) AS enqueue, done, instance, user, request_body, response_body, prompt_tokens, completion_tokens, total_tokens, token_hash FROM request GROUP BY model"
+        "SELECT id, model, MAX(enqueue) AS enqueue, done, status, instance, user, request_body, response_body, prompt_tokens, completion_tokens, total_tokens, token_hash FROM request GROUP BY model"
     )
     .fetch_all(get_executor())
     .await?)
@@ -136,7 +186,7 @@ pub async fn create_request(
     let body_str = request_body.map(serde_json::to_string).transpose()?;
     let p_tokens = prompt_tokens.unwrap_or(0);
     sqlx::query(
-        "INSERT INTO request (id, model, enqueue, instance, user, request_body, prompt_tokens, completion_tokens, total_tokens, token_hash) VALUES (?, ?, unixepoch(), ?, ?, ?, ?, 0, ?, ?)",
+        "INSERT INTO request (id, model, enqueue, done, status, instance, user, request_body, prompt_tokens, completion_tokens, total_tokens, token_hash) VALUES (?, ?, unixepoch(), NULL, 'queued', ?, ?, ?, ?, 0, ?, ?)",
     )
     .bind(&id)
     .bind(model)
@@ -152,11 +202,56 @@ pub async fn create_request(
 }
 
 pub async fn request_done(id: &str) -> Result<(), anyhow::Error> {
-    sqlx::query("UPDATE request SET done = unixepoch() WHERE id = ?")
+    sqlx::query("UPDATE request SET status = 'completed', done = unixepoch() WHERE id = ?")
         .bind(id)
         .execute(get_executor())
         .await?;
     Ok(())
+}
+
+pub async fn request_failed(id: &str) -> Result<(), anyhow::Error> {
+    sqlx::query("UPDATE request SET status = 'failed', done = unixepoch() WHERE id = ?")
+        .bind(id)
+        .execute(get_executor())
+        .await?;
+    Ok(())
+}
+
+pub async fn request_aborted(id: &str) -> Result<(), anyhow::Error> {
+    sqlx::query("UPDATE request SET status = 'aborted', done = unixepoch() WHERE id = ? AND status = 'queued'")
+        .bind(id)
+        .execute(get_executor())
+        .await?;
+    Ok(())
+}
+
+pub async fn request_unknown(id: &str) -> Result<(), anyhow::Error> {
+    sqlx::query("UPDATE request SET status = 'unknown', done = unixepoch() WHERE id = ? AND status = 'queued'")
+        .bind(id)
+        .execute(get_executor())
+        .await?;
+    Ok(())
+}
+
+pub async fn cleanup_stale_queued_requests() -> Result<u64, anyhow::Error> {
+    let res = sqlx::query(
+        "UPDATE request SET status = 'unknown', done = coalesce(done, enqueue) WHERE status = 'queued'"
+    )
+    .execute(get_executor())
+    .await?;
+    Ok(res.rows_affected())
+}
+
+pub async fn cleanup_timed_out_requests(timeout_secs: i64) -> Result<u64, anyhow::Error> {
+    let now = Utc::now().timestamp();
+    let res = sqlx::query(
+        "UPDATE request SET status = 'unknown', done = unixepoch() WHERE status = 'queued' AND enqueue + ? < ?"
+    )
+    .bind(timeout_secs)
+    .bind(now)
+    .execute(get_executor())
+    .await?;
+    Ok(res.rows_affected())
 }
 
 pub async fn save_response_body(id: &str, body: &str) -> Result<(), anyhow::Error> {
@@ -208,7 +303,7 @@ pub async fn update_request_tokens(
 
 pub async fn get_request_by_id(id: &str) -> Result<Option<Request>, anyhow::Error> {
     let req = sqlx::query_as::<_, Request>(
-        "SELECT id, model, enqueue, done, instance, user, request_body, response_body, prompt_tokens, completion_tokens, total_tokens, token_hash FROM request WHERE id = ?",
+        "SELECT id, model, enqueue, done, status, instance, user, request_body, response_body, prompt_tokens, completion_tokens, total_tokens, token_hash FROM request WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(get_executor())
@@ -236,9 +331,15 @@ pub async fn get_requests(filter: &RequestFilter) -> Result<PaginatedRequests, a
         where_clauses.push(format!("instance = '{}'", inst.replace('\'', "''")));
     }
     if let Some(ref st) = filter.status {
-        match st.as_str() {
-            "pending" => where_clauses.push("done IS NULL".to_string()),
-            "completed" => where_clauses.push("done IS NOT NULL".to_string()),
+        match st.to_lowercase().as_str() {
+            "pending" | "queued" => {
+                let cutoff = Utc::now().timestamp() - i64::from(crate::config::CONFIG.model_timeout);
+                where_clauses.push(format!("status = 'queued' AND enqueue >= {cutoff}"));
+            }
+            "completed" | "done" => where_clauses.push("status = 'completed'".to_string()),
+            "failed" | "error" => where_clauses.push("status = 'failed'".to_string()),
+            "aborted" | "cancelled" | "canceled" => where_clauses.push("status = 'aborted'".to_string()),
+            "unknown" => where_clauses.push("status = 'unknown'".to_string()),
             _ => {}
         }
     }
@@ -261,9 +362,9 @@ pub async fn get_requests(filter: &RequestFilter) -> Result<PaginatedRequests, a
         .await?;
 
     let select_columns = if include_bodies {
-        "id, model, enqueue, done, instance, user, request_body, response_body, prompt_tokens, completion_tokens, total_tokens, token_hash"
+        "id, model, enqueue, done, status, instance, user, request_body, response_body, prompt_tokens, completion_tokens, total_tokens, token_hash"
     } else {
-        "id, model, enqueue, done, instance, user, NULL AS request_body, NULL AS response_body, prompt_tokens, completion_tokens, total_tokens, token_hash"
+        "id, model, enqueue, done, status, instance, user, NULL AS request_body, NULL AS response_body, prompt_tokens, completion_tokens, total_tokens, token_hash"
     };
 
     let data_query = format!(
@@ -281,14 +382,14 @@ pub async fn get_requests(filter: &RequestFilter) -> Result<PaginatedRequests, a
                 if text.trim().is_empty() {
                     None
                 } else {
-                    Some(serde_json::from_str(&text).unwrap_or_else(|_| serde_json::Value::String(text)))
+                    Some(serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text)))
                 }
             });
             let response_body = r.response_body.and_then(|text| {
                 if text.trim().is_empty() {
                     None
                 } else {
-                    Some(serde_json::from_str(&text).unwrap_or_else(|_| serde_json::Value::String(text)))
+                    Some(serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text)))
                 }
             });
             RequestLog {
@@ -296,6 +397,7 @@ pub async fn get_requests(filter: &RequestFilter) -> Result<PaginatedRequests, a
                 model: r.model,
                 enqueue: r.enqueue,
                 done: r.done,
+                status: Some(r.status),
                 user: r.user,
                 instance: Some(r.instance),
                 request_body,
@@ -323,6 +425,7 @@ pub async fn delete_old_requests(older_than: i64) -> Result<u64, anyhow::Error> 
 #[allow(clippy::similar_names)]
 pub async fn get_metrics_summary() -> Result<MetricsSummary, anyhow::Error> {
     let now = Utc::now().timestamp();
+    let cutoff = now - i64::from(crate::config::CONFIG.model_timeout);
 
     let total_requests: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request")
         .fetch_one(get_executor())
@@ -330,13 +433,14 @@ pub async fn get_metrics_summary() -> Result<MetricsSummary, anyhow::Error> {
         .unwrap_or(0);
 
     let pending_requests: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE done IS NULL")
+        sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE status = 'queued' AND enqueue >= ?")
+            .bind(cutoff)
             .fetch_one(get_executor())
             .await
             .unwrap_or(0);
 
     let completed_requests: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE done IS NOT NULL")
+        sqlx::query_scalar("SELECT COUNT(*) FROM request WHERE status = 'completed'")
             .fetch_one(get_executor())
             .await
             .unwrap_or(0);
@@ -452,13 +556,14 @@ struct ModelMetricsRow {
 }
 
 pub async fn get_model_metrics() -> Result<Vec<ModelMetrics>, anyhow::Error> {
+    let cutoff = Utc::now().timestamp() - i64::from(crate::config::CONFIG.model_timeout);
     let rows = sqlx::query_as::<_, ModelMetricsRow>(
         r"
         SELECT
             model,
             COUNT(*) AS total_requests,
-            SUM(CASE WHEN done IS NULL THEN 1 ELSE 0 END) AS pending_requests,
-            SUM(CASE WHEN done IS NOT NULL THEN 1 ELSE 0 END) AS completed_requests,
+            SUM(CASE WHEN status = 'queued' AND enqueue >= ? THEN 1 ELSE 0 END) AS pending_requests,
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_requests,
             AVG(CASE WHEN done IS NOT NULL AND done >= enqueue THEN (done - enqueue) ELSE NULL END) AS avg_duration,
             MAX(enqueue) AS last_enqueue,
             SUM(total_tokens) AS total_tokens
@@ -467,6 +572,7 @@ pub async fn get_model_metrics() -> Result<Vec<ModelMetrics>, anyhow::Error> {
         ORDER BY total_requests DESC
         ",
     )
+    .bind(cutoff)
     .fetch_all(get_executor())
     .await?;
 
@@ -506,14 +612,15 @@ struct UserMetricsRow {
 }
 
 pub async fn get_user_metrics(username: Option<&str>) -> Result<Vec<UserMetrics>, anyhow::Error> {
+    let cutoff = Utc::now().timestamp() - i64::from(crate::config::CONFIG.model_timeout);
     let rows = if let Some(u) = username {
         sqlx::query_as::<_, UserMetricsRow>(
             r"
             SELECT
                 user,
                 COUNT(*) AS total_requests,
-                SUM(CASE WHEN done IS NULL THEN 1 ELSE 0 END) AS pending_requests,
-                SUM(CASE WHEN done IS NOT NULL THEN 1 ELSE 0 END) AS completed_requests,
+                SUM(CASE WHEN status = 'queued' AND enqueue >= ? THEN 1 ELSE 0 END) AS pending_requests,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_requests,
                 AVG(CASE WHEN done IS NOT NULL AND done >= enqueue THEN (done - enqueue) ELSE NULL END) AS avg_duration,
                 MAX(enqueue) AS last_enqueue,
                 SUM(total_tokens) AS total_tokens
@@ -522,6 +629,7 @@ pub async fn get_user_metrics(username: Option<&str>) -> Result<Vec<UserMetrics>
             GROUP BY user
             ",
         )
+        .bind(cutoff)
         .bind(u)
         .fetch_all(get_executor())
         .await?
@@ -531,8 +639,8 @@ pub async fn get_user_metrics(username: Option<&str>) -> Result<Vec<UserMetrics>
             SELECT
                 user,
                 COUNT(*) AS total_requests,
-                SUM(CASE WHEN done IS NULL THEN 1 ELSE 0 END) AS pending_requests,
-                SUM(CASE WHEN done IS NOT NULL THEN 1 ELSE 0 END) AS completed_requests,
+                SUM(CASE WHEN status = 'queued' AND enqueue >= ? THEN 1 ELSE 0 END) AS pending_requests,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_requests,
                 AVG(CASE WHEN done IS NOT NULL AND done >= enqueue THEN (done - enqueue) ELSE NULL END) AS avg_duration,
                 MAX(enqueue) AS last_enqueue,
                 SUM(total_tokens) AS total_tokens
@@ -541,6 +649,7 @@ pub async fn get_user_metrics(username: Option<&str>) -> Result<Vec<UserMetrics>
             ORDER BY total_requests DESC
             ",
         )
+        .bind(cutoff)
         .fetch_all(get_executor())
         .await?
     };
@@ -666,6 +775,7 @@ pub async fn get_batch_models_live_stats(
         .collect();
 
     // 1. Pending queues
+    let cutoff = now - i64::from(crate::config::CONFIG.model_timeout);
     let pending_rows = sqlx::query_as::<_, PendingRow>(
         r"
         SELECT
@@ -673,11 +783,12 @@ pub async fn get_batch_models_live_stats(
             COUNT(DISTINCT id) AS total_pending,
             COALESCE(SUM(CASE WHEN user = ? THEN 1 ELSE 0 END), 0) AS user_pending
         FROM request
-        WHERE done IS NULL
+        WHERE status = 'queued' AND enqueue >= ?
         GROUP BY model
         ",
     )
     .bind(username)
+    .bind(cutoff)
     .fetch_all(get_executor())
     .await
     .unwrap_or_default();

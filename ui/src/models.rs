@@ -243,12 +243,24 @@ pub struct AliasRecord {
 // --------------------------------------------------------------------------
 // Request Logs & Inspector
 // --------------------------------------------------------------------------
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RequestStatus {
+    Queued,
+    Completed,
+    Failed,
+    Aborted,
+    Unknown,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RequestLog {
     pub id: String,
     pub model: String,
     pub enqueue: i64,
     pub done: Option<i64>,
+    #[serde(default)]
+    pub status: Option<RequestStatus>,
     pub user: Option<String>,
     pub instance: Option<String>,
     pub request_body: Option<serde_json::Value>,

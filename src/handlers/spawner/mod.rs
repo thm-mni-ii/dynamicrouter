@@ -2,7 +2,7 @@ use crate::config::{CONFIG, FactoryType};
 use crate::db::instance::{Instance, create_instance, delete_instance, get_instances_for};
 use crate::db::model::get_model_config;
 use crate::db::request::{
-    count_pending_requests_for, create_request, latest_for_each_model, request_done,
+    count_pending_requests_for, create_request, latest_for_each_model, request_done, request_failed,
 };
 use crate::fatal;
 use crate::handlers::spawner::factories::kubernetes::KubernetesModelFactory;
@@ -11,7 +11,7 @@ use crate::handlers::spawner::factories::runpod::RunpodModelFactory;
 use crate::handlers::spawner::factories::{DynModelFactory, ModelFactory};
 use crate::handlers::{DynHandler, GenerationType, Handler};
 use crate::utils::ModelRef;
-use crate::utils::response::{ModelResponse, wrap_response_with_logging};
+use crate::utils::response::{ModelResponse, RequestGuard, wrap_response_with_logging};
 use k8s_openapi::chrono::Utc;
 use log::{error, info};
 use rand::seq::IndexedRandom;
@@ -60,6 +60,7 @@ impl SpawnerHandler {
     }
 
     pub async fn auto_clean(&self) -> Result<(), anyhow::Error> {
+        let _ = crate::db::request::cleanup_timed_out_requests(i64::from(CONFIG.model_timeout)).await;
         let results = latest_for_each_model().await?;
         for item in results {
             let lock = self.get_lock(&item.model).await;
@@ -69,7 +70,7 @@ impl SpawnerHandler {
                 .and_then(|m| m.timeout)
                 .unwrap_or(CONFIG.model_timeout);
 
-            if item.done.is_none() || item.enqueue + i64::from(timeout) > Utc::now().timestamp() {
+            if item.enqueue + i64::from(timeout) > Utc::now().timestamp() {
                 continue;
             }
             let instances = get_instances_for(&item.model).await?;
@@ -150,12 +151,22 @@ impl Handler for SpawnerHandler {
         };
         let request_id =
             create_request(&model_name, dyn_model.id().await, username, request_body, Some(prompt_tokens), token_hash).await?;
+        let mut guard = RequestGuard::new(request_id.clone());
         drop(_lock_guard);
 
         let model = RetryingModel::new_dyn(dyn_model);
         let result = model.generate(generation_type, request).await;
 
-        request_done(&request_id).await?;
+        match &result {
+            Ok(_) => {
+                request_done(&request_id).await?;
+                guard.mark_completed();
+            }
+            Err(_) => {
+                request_failed(&request_id).await?;
+                guard.mark_completed();
+            }
+        }
 
         let result = match result {
             Ok(response) => Ok(wrap_response_with_logging(response, request_id, prompt_tokens)),

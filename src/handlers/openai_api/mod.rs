@@ -4,10 +4,10 @@ use crate::db::model::{
     ModelHandlerConfig, OpenAiHandlerConfig, get_exact_model_config, get_model_config,
 };
 use crate::db::openai_api::{OpenAiApiRecord, get_all_openai_apis, get_openai_api};
-use crate::db::request::{create_request, request_done};
+use crate::db::request::{create_request, request_done, request_failed};
 use crate::handlers::{DynHandler, GenerationType, Handler};
 use crate::utils::ModelRef;
-use crate::utils::response::{ModelResponse, StreamAdapter, wrap_response_with_logging};
+use crate::utils::response::{ModelResponse, RequestGuard, StreamAdapter, wrap_response_with_logging};
 use log::error;
 use secrecy::ExposeSecret;
 use serde_json::{Value, json};
@@ -238,6 +238,7 @@ impl Handler for OpenaiHandler {
 
         let request_id =
             create_request(&model_name, &instance_name, username, logged_request_body, Some(prompt_tokens), token_hash).await?;
+        let mut guard = RequestGuard::new(request_id.clone());
 
         let mut req_builder = self
             .client
@@ -256,10 +257,12 @@ impl Handler for OpenaiHandler {
         }
 
         let response_result = req_builder.send().await;
-        request_done(&request_id).await?;
 
         match response_result {
             Ok(res) => {
+                request_done(&request_id).await?;
+                guard.mark_completed();
+
                 let status = res.status();
                 let content_type = res
                     .headers()
@@ -280,6 +283,8 @@ impl Handler for OpenaiHandler {
                 Ok(wrap_response_with_logging(model_response, request_id, prompt_tokens))
             }
             Err(err) => {
+                request_failed(&request_id).await?;
+                guard.mark_completed();
                 error!("Error while sending request to OpenAI API '{api_name}': {err}");
                 Err(err.into())
             }
