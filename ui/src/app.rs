@@ -130,7 +130,7 @@ pub fn App() -> Element {
                     match *active_tab.read() {
                         ActiveTab::Chat => rsx! { ChatView {} },
                         ActiveTab::UserModels => rsx! { UserModelsView { active_tab } },
-                        ActiveTab::Tokens => rsx! { TokensView { toasts } },
+                        ActiveTab::Tokens => rsx! { TokensView { toasts, current_user } },
                         ActiveTab::UserLogs => rsx! { UserLogsView {} },
                         ActiveTab::UserMetrics => rsx! { UserMetricsView {} },
                         ActiveTab::AdminDashboard => rsx! { AdminDashboardView {} },

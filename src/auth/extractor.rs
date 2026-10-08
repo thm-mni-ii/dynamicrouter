@@ -13,6 +13,12 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AuthKind {
+    Session,
+    Token,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthUser {
     pub username: String,
@@ -20,6 +26,14 @@ pub struct AuthUser {
     pub is_admin: bool,
     pub user: Option<User>,
     pub token: String,
+    pub auth_kind: AuthKind,
+    pub token_hash: Option<String>,
+}
+
+impl AuthUser {
+    pub fn is_token_login(&self) -> bool {
+        self.auth_kind == AuthKind::Token
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -165,6 +179,8 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                 is_admin,
                 user: db_user,
                 token: raw_token,
+                auth_kind: AuthKind::Session,
+                token_hash: None,
             });
         }
 
@@ -186,13 +202,15 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                     client_ip
                 )));
             }
-            let is_admin = user.is_admin || CONFIG.is_user_admin_by_config(&user.username);
+            // Token authentication does not allow any admin actions
             return Ok(AuthUser {
                 username: user.username.clone(),
                 email: None,
-                is_admin,
+                is_admin: false,
                 user: Some(user),
                 token: raw_token,
+                auth_kind: AuthKind::Token,
+                token_hash: Some(user_token.token_hash),
             });
         }
 
@@ -214,13 +232,14 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                     client_ip
                 )));
             }
-            let is_admin = user.is_admin || CONFIG.is_user_admin_by_config(&user.username);
             return Ok(AuthUser {
                 username: user.username.clone(),
                 email: None,
-                is_admin,
+                is_admin: false,
                 user: Some(user),
                 token: raw_token,
+                auth_kind: AuthKind::Token,
+                token_hash: Some(user_token.token_hash),
             });
         }
 
@@ -231,13 +250,14 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                     user.username
                 )));
             }
-            let is_admin = user.is_admin || CONFIG.is_user_admin_by_config(&user.username);
             return Ok(AuthUser {
                 username: user.username.clone(),
                 email: None,
-                is_admin,
+                is_admin: false,
                 user: Some(user),
                 token: raw_token,
+                auth_kind: AuthKind::Token,
+                token_hash: None,
             });
         }
 
@@ -278,6 +298,8 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                 is_admin,
                 user: db_user,
                 token: raw_token,
+                auth_kind: AuthKind::Session,
+                token_hash: None,
             });
         }
 
@@ -290,6 +312,11 @@ impl<S: Send + Sync> FromRequestParts<S> for AdminUser {
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let auth_user = AuthUser::from_request_parts(parts, state).await?;
+        if auth_user.is_token_login() {
+            return Err(AuthError::Forbidden(
+                "Admin actions cannot be performed using API token authentication. Please log in via SSO/session.".to_string(),
+            ));
+        }
         if auth_user.is_admin {
             Ok(AdminUser(auth_user))
         } else {

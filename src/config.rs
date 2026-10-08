@@ -44,6 +44,7 @@ pub struct EnvConfig {
     pub oidc_admin_roles: HashSet<String>,
     pub oidc_enabled: bool,
     pub oidc_auto_register: bool,
+    pub session_ttl_secs: i64,
 }
 
 fn load_env_all() {
@@ -332,6 +333,25 @@ impl EnvConfig {
             .or_else(|_| env::var("AUTO_REGISTER_USERS"))
             .is_ok_and(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"));
 
+        let session_ttl_secs = env::var("SESSION_TTL_SECS")
+            .ok()
+            .and_then(|s| s.parse::<i64>().ok())
+            .or_else(|| {
+                env::var("SESSION_TTL_HOURS")
+                    .or_else(|_| env::var("SESSION_DURATION_HOURS"))
+                    .ok()
+                    .and_then(|h| h.parse::<i64>().ok())
+                    .map(|h| h * 3600)
+            })
+            .or_else(|| {
+                env::var("SESSION_TTL_DAYS")
+                    .or_else(|_| env::var("SESSION_DURATION_DAYS"))
+                    .ok()
+                    .and_then(|d| d.parse::<i64>().ok())
+                    .map(|d| d * 86400)
+            })
+            .unwrap_or(12 * 3600); // Default to 12 hours (43,200 seconds)
+
         EnvConfig {
             port,
             host,
@@ -360,6 +380,7 @@ impl EnvConfig {
             oidc_admin_roles,
             oidc_enabled,
             oidc_auto_register,
+            session_ttl_secs,
         }
     }
 

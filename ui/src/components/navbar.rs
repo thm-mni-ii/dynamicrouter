@@ -357,7 +357,13 @@ pub fn Navbar(
                             class: "glass-badge badge-glow user-badge",
                             IconUser { size: 14 }
                             span { "{user.username}" }
-                            if user.is_admin {
+                            if user.is_token_login {
+                                span {
+                                    class: "badge badge-warning text-xs font-mono ml-1",
+                                    style: "font-size: 0.65rem; padding: 1px 6px; border-radius: 6px; background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3);",
+                                    "token"
+                                }
+                            } else if user.is_admin {
                                 span { class: "status-dot status-dot-pulse", style: "margin-left: 2px;" }
                             }
                         }

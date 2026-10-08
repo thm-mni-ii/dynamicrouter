@@ -39,6 +39,8 @@ async fn get_me(user: AuthUser) -> Json<serde_json::Value> {
         "username": user.username,
         "email": user.email,
         "is_admin": user.is_admin,
+        "is_token_login": user.is_token_login(),
+        "token_hash": user.token_hash,
         "limit_to_models": user.user.as_ref().and_then(|u| u.limit_to_models.clone()),
         "log_request_body": user.user.as_ref().and_then(|u| u.log_request_body),
         "expires_at": user.user.as_ref().and_then(|u| u.expires_at),
@@ -49,12 +51,18 @@ async fn get_me(user: AuthUser) -> Json<serde_json::Value> {
 async fn get_tokens(
     user: AuthUser,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let tokens = get_user_tokens(&user.username).await.map_err(|e| {
+    let mut tokens = get_user_tokens(&user.username).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": format!("Failed to fetch tokens: {e}") })),
         )
     })?;
+
+    // Token login does not display other tokens: only the active token used to authenticate
+    if user.is_token_login() {
+        let current_hash = user.token_hash.as_deref().unwrap_or("");
+        tokens.retain(|t| t.token_hash == current_hash);
+    }
 
     let now = Utc::now().timestamp();
     let mut enriched_tokens = Vec::new();
@@ -91,6 +99,13 @@ async fn create_token(
     user: AuthUser,
     payload: Option<Json<CreateTokenInput>>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    if user.is_token_login() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "Token management is not permitted when authenticated via API token. Please log in via SSO/session." })),
+        ));
+    }
+
     let input = payload.map(|p| p.0);
     let (raw_token, user_token) = generate_and_add_user_token(&user.username, input)
         .await
@@ -151,6 +166,13 @@ async fn update_token(
     Path(token_hash): Path<String>,
     Json(payload): Json<UpdateTokenInput>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if user.is_token_login() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "Token management is not permitted when authenticated via API token. Please log in via SSO/session." })),
+        ));
+    }
+
     let updated = update_user_token_for_user(&user.username, &token_hash, payload)
         .await
         .map_err(|e| {
@@ -188,6 +210,16 @@ async fn delete_token(
     user: AuthUser,
     Path(token_hash): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if user.is_token_login() {
+        let current_hash = user.token_hash.as_deref().unwrap_or("");
+        if token_hash != current_hash {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(json!({ "error": "Token login only allows self-revocation of the active token." })),
+            ));
+        }
+    }
+
     let deleted = delete_user_token_for_user(&user.username, &token_hash)
         .await
         .map_err(|e| {

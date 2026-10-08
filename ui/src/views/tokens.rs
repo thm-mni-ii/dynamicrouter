@@ -1,10 +1,12 @@
 use crate::api::{
-    create_user_token, delete_user_token, fetch_user_tokens, fetch_v1_models, update_user_token,
+    create_user_token, delete_user_token, fetch_user_tokens, fetch_v1_models, set_stored_token,
+    update_user_token,
 };
 use crate::components::icons::*;
 use crate::components::{ChipInput, GlassBadge, GlassCard, GlassModal};
 use crate::models::{
-    CreateTokenPayload, CreatedTokenResponse, TokenRateLimitInput, UpdateTokenPayload, UserToken,
+    CreateTokenPayload, CreatedTokenResponse, TokenRateLimitInput, UpdateTokenPayload, UserProfile,
+    UserToken,
 };
 use crate::state::Toast;
 use dioxus::prelude::*;
@@ -66,10 +68,12 @@ fn load_tokens_action(
 }
 
 #[component]
-pub fn TokensView(toasts: Signal<Vec<Toast>>) -> Element {
+pub fn TokensView(toasts: Signal<Vec<Toast>>, current_user: Signal<Option<UserProfile>>) -> Element {
     let tokens = use_signal(Vec::<UserToken>::new);
     let is_loading = use_signal(|| false);
     let mut model_suggestions = use_signal(Vec::<String>::new);
+
+    let is_token_login = current_user.read().as_ref().is_some_and(|u| u.is_token_login);
 
     // Modal states
     let mut is_create_modal_open = use_signal(|| false);
@@ -284,15 +288,25 @@ pub fn TokensView(toasts: Signal<Vec<Toast>>) -> Element {
     };
 
     let on_delete_token = move |hash: String| {
+        let mut current_user = current_user;
         spawn(async move {
             match delete_user_token(&hash).await {
                 Ok(_) => {
                     toasts.write().push(Toast {
                         id: js_sys::Date::now() as u64,
-                        message: "Token revoked successfully.".to_string(),
+                        message: if is_token_login {
+                            "Active token revoked. You have been signed out.".to_string()
+                        } else {
+                            "Token revoked successfully.".to_string()
+                        },
                         is_error: false,
                     });
-                    load_tokens_action(is_loading, tokens, toasts);
+                    if is_token_login {
+                        set_stored_token(None);
+                        current_user.set(None);
+                    } else {
+                        load_tokens_action(is_loading, tokens, toasts);
+                    }
                 }
                 Err(err) => {
                     toasts.write().push(Toast {
@@ -343,6 +357,18 @@ pub fn TokensView(toasts: Signal<Vec<Toast>>) -> Element {
         div {
             class: "flex flex-col gap-4",
 
+            if is_token_login {
+                div {
+                    class: "flex items-center gap-3 p-3.5 rounded-xl border",
+                    style: "background: rgba(245, 158, 11, 0.08); border-color: rgba(245, 158, 11, 0.25); color: #fbbf24;",
+                    IconShield { size: 20 }
+                    div {
+                        div { class: "font-semibold text-sm", "Token Restricted Mode" }
+                        div { class: "text-xs opacity-90", "You are logged in via an API token. Token creation and editing are disabled; other tokens are hidden. Only self-revocation of your active login token is permitted." }
+                    }
+                }
+            }
+
             GlassCard {
                 div {
                     class: "card-header",
@@ -354,11 +380,13 @@ pub fn TokensView(toasts: Signal<Vec<Toast>>) -> Element {
                         }
                         p { class: "card-description", "Manage your API keys with optional custom names, model restrictions, individual rate limits, IP whitelists, and expiration dates." }
                     }
-                    button {
-                        class: "glass-btn btn-primary",
-                        onclick: open_create_modal,
-                        IconPlus { size: 16 }
-                        span { "Generate New Token" }
+                    if !is_token_login {
+                        button {
+                            class: "glass-btn btn-primary",
+                            onclick: open_create_modal,
+                            IconPlus { size: 16 }
+                            span { "Generate New Token" }
+                        }
                     }
                 }
 
@@ -405,6 +433,13 @@ pub fn TokensView(toasts: Signal<Vec<Toast>>) -> Element {
                                                     class: "font-mono text-xs px-1.5 py-0.5 rounded",
                                                     style: "background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1); color: #94a3b8;",
                                                     "{token.preview.as_deref().unwrap_or(&token.token_hash)}"
+                                                }
+                                                if is_token_login {
+                                                    span {
+                                                        class: "badge badge-warning text-xs font-mono ml-2",
+                                                        style: "font-size: 0.65rem; padding: 1px 6px; border-radius: 6px; background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3);",
+                                                        "Active Login Token"
+                                                    }
                                                 }
                                             }
                                         }
@@ -484,13 +519,15 @@ pub fn TokensView(toasts: Signal<Vec<Toast>>) -> Element {
                                         class: "text-right",
                                         div {
                                             class: "flex items-center justify-end gap-2",
-                                            button {
-                                                class: "glass-btn btn-secondary btn-sm",
-                                                onclick: {
-                                                    let t = token.clone();
-                                                    move |_| open_edit_modal(t.clone())
-                                                },
-                                                "Edit"
+                                            if !is_token_login {
+                                                button {
+                                                    class: "glass-btn btn-secondary btn-sm",
+                                                    onclick: {
+                                                        let t = token.clone();
+                                                        move |_| open_edit_modal(t.clone())
+                                                    },
+                                                    "Edit"
+                                                }
                                             }
                                             button {
                                                 class: "glass-btn btn-danger btn-sm",

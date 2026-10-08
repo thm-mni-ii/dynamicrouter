@@ -9,6 +9,9 @@ pub struct UserProfile {
     pub username: String,
     pub email: Option<String>,
     pub is_admin: bool,
+    #[serde(default)]
+    pub is_token_login: bool,
+    pub token_hash: Option<String>,
     pub limit_to_models: Option<HashSet<String>>,
     pub log_request_body: Option<bool>,
     pub expires_at: Option<i64>,

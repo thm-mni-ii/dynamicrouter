@@ -710,7 +710,7 @@ async fn handle_callback(
         error!("Failed to auto-create/update user in database: {e}");
     }
 
-    let ttl_secs = token_res.expires_in.unwrap_or(86400 * 7);
+    let ttl_secs = CONFIG.session_ttl_secs;
     let session_token = SESSIONS
         .create_session(
             username.clone(),
@@ -796,6 +796,8 @@ async fn auth_me(user: AuthUser) -> Json<serde_json::Value> {
         "username": user.username,
         "email": user.email,
         "is_admin": user.is_admin,
+        "is_token_login": user.is_token_login(),
+        "token_hash": user.token_hash,
         "models": user.user.as_ref().and_then(|u| u.limit_to_models.clone()),
         "log_request_body": user.user.as_ref().and_then(|u| u.log_request_body),
         "expires_at": user.user.as_ref().and_then(|u| u.expires_at),
