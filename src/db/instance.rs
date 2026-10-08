@@ -40,6 +40,15 @@ pub async fn get_instance(id: &str) -> Result<Option<InstanceSummary>, anyhow::E
     .await?)
 }
 
+pub async fn get_instance_by_id(id: &str) -> Result<Option<Instance>, anyhow::Error> {
+    Ok(sqlx::query_as::<_, Instance>(
+        "SELECT id, model, data FROM instance WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(get_executor())
+    .await?)
+}
+
 pub async fn create_instance(instance: &Instance) -> Result<(), anyhow::Error> {
     sqlx::query("INSERT INTO instance (id, model, data) VALUES (?, ?, ?)")
         .bind(&instance.id)

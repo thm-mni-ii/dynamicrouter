@@ -32,7 +32,7 @@ pub struct SpawnerHandler {
 }
 
 impl SpawnerHandler {
-    pub async fn new_dyn() -> DynHandler {
+    pub async fn new_arc() -> Arc<SpawnerHandler> {
         let mf: Arc<dyn ModelFactory> = match CONFIG.factory_type {
             Some(FactoryType::Kubernetes) => match KubernetesModelFactory::new().await {
                 Ok(mf) => Arc::new(mf),
@@ -51,12 +51,59 @@ impl SpawnerHandler {
         sh
     }
 
+    pub fn with_factory(model_factory: DynModelFactory) -> Arc<SpawnerHandler> {
+        Arc::new(SpawnerHandler {
+            model_factory,
+            model_locks: Mutex::new(HashMap::new()),
+            auto_clean_running: Mutex::new(false),
+        })
+    }
+
+    pub async fn new_dyn() -> DynHandler {
+        Self::new_arc().await
+    }
+
     async fn get_lock(&self, model: &str) -> Arc<Mutex<()>> {
         let mut map_lock = self.model_locks.lock().await;
         if !map_lock.contains_key(model) {
             map_lock.insert(model.to_string(), Arc::new(Mutex::new(())));
         }
         map_lock.get(model).unwrap().clone()
+    }
+
+    pub async fn terminate_instance(&self, id: &str) -> Result<(), anyhow::Error> {
+        let instance = match crate::db::instance::get_instance_by_id(id).await? {
+            Some(inst) => Some(inst),
+            None => {
+                if let Some(stripped) = id.strip_prefix("dynamicrouter-inference-") {
+                    crate::db::instance::get_instance_by_id(stripped).await?
+                } else {
+                    None
+                }
+            }
+        };
+
+        if let Some(inst) = instance {
+            let lock = self.get_lock(&inst.model).await;
+            let _lock_guard = lock.lock().await;
+
+            if !inst.data.is_empty() {
+                if let Err(e) = self.model_factory.destroy_id(&inst.id).await {
+                    error!("Error destroying instance {} in model factory: {e}", inst.id);
+                }
+            }
+            delete_instance(&inst.id).await?;
+            if inst.id != id {
+                let _ = delete_instance(id).await;
+            }
+        } else {
+            if let Err(e) = self.model_factory.destroy_id(id).await {
+                error!("Error destroying instance {id} in model factory: {e}");
+            }
+            delete_instance(id).await?;
+        }
+
+        Ok(())
     }
 
     pub async fn auto_clean(&self) -> Result<(), anyhow::Error> {
@@ -75,13 +122,14 @@ impl SpawnerHandler {
             }
             let instances = get_instances_for(&item.model).await?;
             for instance in instances {
-                let model = self.model_factory.restore(&instance.data).await?;
                 info!(
                     "Cleaning instance {} for {}",
-                    model.id().await,
-                    model.name().await
+                    instance.id,
+                    item.model
                 );
-                self.model_factory.destroy(model).await?;
+                if let Err(e) = self.model_factory.destroy_id(&instance.id).await {
+                    error!("Error destroying instance {} for {}: {e}", instance.id, item.model);
+                }
                 delete_instance(&instance.id).await?;
             }
         }

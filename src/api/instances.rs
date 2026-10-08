@@ -50,12 +50,21 @@ async fn remove_instance(
     _admin: AdminUser,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    delete_instance(&id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("Failed to delete instance: {e}") })),
-        )
-    })?;
+    if let Some(handler) = crate::handlers::try_get_handler() {
+        handler.terminate_instance(&id).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Failed to terminate instance: {e}") })),
+            )
+        })?;
+    } else {
+        delete_instance(&id).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Failed to delete instance: {e}") })),
+            )
+        })?;
+    }
 
     Ok(Json(json!({ "status": "deleted", "id": id })))
 }

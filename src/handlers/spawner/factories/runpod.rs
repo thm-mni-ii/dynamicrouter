@@ -151,10 +151,9 @@ impl ModelFactory for RunpodModelFactory {
         ))
     }
 
-    async fn destroy(&self, model: DynModel) -> Result<(), anyhow::Error> {
+    async fn destroy_id(&self, id: &str) -> Result<(), anyhow::Error> {
         let token = CONFIG.runpod_token.as_ref().ok_or(RunpodError::NoToken())?;
 
-        let id = model.id().await;
         self.client
             .post(RUNPOD_GRAPHQL.clone())
             .bearer_auth(token.expose_secret())
@@ -167,6 +166,10 @@ impl ModelFactory for RunpodModelFactory {
             .await?
             .error_for_status()?;
         Ok(())
+    }
+
+    async fn destroy(&self, model: DynModel) -> Result<(), anyhow::Error> {
+        self.destroy_id(model.id().await).await
     }
 
     async fn dump(&self, model: &DynModel) -> Result<Vec<u8>, anyhow::Error> {

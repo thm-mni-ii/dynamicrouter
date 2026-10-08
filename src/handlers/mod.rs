@@ -27,6 +27,10 @@ pub fn get_handler() -> &'static RoutingHandler {
         .expect("you tried to access the handler before it was initialized")
 }
 
+pub fn try_get_handler() -> Option<&'static RoutingHandler> {
+    RH.get()
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
 pub enum GenerationType {
     Completions,
@@ -50,16 +54,24 @@ pub trait Handler: Send + Sync {
 pub type DynHandler = Arc<dyn Handler>;
 
 pub struct RoutingHandler {
-    spawner_handler: DynHandler,
+    spawner_handler: Arc<SpawnerHandler>,
     openai_handler: DynHandler,
 }
 
 impl RoutingHandler {
     async fn new() -> Self {
         RoutingHandler {
-            spawner_handler: SpawnerHandler::new_dyn().await,
+            spawner_handler: SpawnerHandler::new_arc().await,
             openai_handler: OpenaiHandler::new_dyn().await,
         }
+    }
+
+    pub fn spawner(&self) -> &Arc<SpawnerHandler> {
+        &self.spawner_handler
+    }
+
+    pub async fn terminate_instance(&self, id: &str) -> Result<(), anyhow::Error> {
+        self.spawner_handler.terminate_instance(id).await
     }
 }
 

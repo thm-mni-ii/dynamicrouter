@@ -158,14 +158,31 @@ impl ModelFactory for KubernetesModelFactory {
         ))
     }
 
+    async fn destroy_id(&self, id: &str) -> Result<(), anyhow::Error> {
+        let pod_name = if id.starts_with("dynamicrouter-inference-") {
+            id.to_string()
+        } else {
+            format!("dynamicrouter-inference-{id}")
+        };
+        match self
+            .pod_api
+            .delete(&pod_name, &DeleteParams::default())
+            .await
+        {
+            Ok(_) => {
+                info!("Deleted Kubernetes pod {pod_name}");
+                Ok(())
+            }
+            Err(kube::Error::Api(ref err)) if err.code == 404 => {
+                info!("Kubernetes pod {pod_name} not found or already deleted");
+                Ok(())
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+
     async fn destroy(&self, model: DynModel) -> Result<(), anyhow::Error> {
-        self.pod_api
-            .delete(
-                &format!("dynamicrouter-inference-{}", model.id().await),
-                &DeleteParams::default(),
-            )
-            .await?;
-        Ok(())
+        self.destroy_id(model.id().await).await
     }
 
     async fn dump(&self, model: &DynModel) -> Result<Vec<u8>, anyhow::Error> {
