@@ -875,6 +875,26 @@ html, body {
   color: #f87171;
 }
 
+/* Alias chips (models page: card & table views) */
+.alias-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  background: var(--glow-surface);
+  border: 1px solid var(--glow-border);
+  color: var(--text-muted);
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+
+.alias-chip:hover {
+  border-color: var(--glow-primary);
+  color: var(--text-main);
+}
+
 .status-dot {
   width: 8px;
   height: 8px;
@@ -1325,11 +1345,14 @@ html, body {
 .justify-between { justify-content: space-between; }
 .justify-center { justify-content: center; }
 .justify-end { justify-content: flex-end; }
+.gap-0\.5 { gap: 0.125rem; }
 .gap-1 { gap: 0.25rem; }
 .gap-1-5 { gap: 0.375rem; }
+.gap-1\.5 { gap: 0.375rem; }
 .gap-2 { gap: 0.5rem; }
 .gap-3 { gap: 0.75rem; }
 .gap-4 { gap: 1rem; }
+.mt-0\.5 { margin-top: 0.125rem; }
 .mt-1 { margin-top: 0.25rem; }
 .mt-2 { margin-top: 0.5rem; }
 .mt-3 { margin-top: 0.75rem; }
@@ -1343,8 +1366,10 @@ html, body {
 .p-2-5 { padding: 0.625rem; }
 .p-3 { padding: 0.75rem; }
 .p-4 { padding: 1rem; }
+.px-1\.5 { padding-left: 0.375rem; padding-right: 0.375rem; }
 .px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
 .px-3 { padding-left: 0.75rem; padding-right: 0.75rem; }
+.py-0\.5 { padding-top: 0.125rem; padding-bottom: 0.125rem; }
 .py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
 .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
 .pt-1 { padding-top: 0.25rem; }
@@ -1353,6 +1378,7 @@ html, body {
 .pb-2 { padding-bottom: 0.5rem; }
 .border-t { border-top: 1px solid var(--glass-border); }
 .border-b { border-bottom: 1px solid var(--glass-border); }
+.rounded { border-radius: 4px; }
 .rounded-md { border-radius: 8px; }
 .rounded-lg { border-radius: 10px; }
 .rounded-xl { border-radius: 14px; }

@@ -273,7 +273,17 @@ pub fn UserModelsView(mut active_tab: Signal<ActiveTab>) -> Element {
                                                 span { class: "font-bold text-sm", "{m.name}" }
                                                 span { class: "font-mono text-xs text-muted", "{m.id}" }
                                                 if !m.aliases.is_empty() {
-                                                    span { class: "text-xs text-dim", "alias: {m.aliases.join(\", \")}" }
+                                                    div {
+                                                        class: "flex items-center gap-1.5 flex-wrap mt-0.5",
+                                                        span { class: "text-xs text-dim", "Aliases:" }
+                                                        for alias in m.aliases.iter() {
+                                                            span {
+                                                                key: "{alias}",
+                                                                class: "alias-chip",
+                                                                "{alias}"
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -408,8 +418,7 @@ pub fn UserModelsView(mut active_tab: Signal<ActiveTab>) -> Element {
                                             for alias in m.aliases.iter() {
                                                 span {
                                                     key: "{alias}",
-                                                    class: "text-xs font-mono px-2 py-0.5 rounded",
-                                                    style: "background: var(--glow-surface); border: 1px solid var(--glow-border);",
+                                                    class: "alias-chip",
                                                     "{alias}"
                                                 }
                                             }
