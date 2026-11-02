@@ -49,6 +49,35 @@ pub fn is_user_allowed(allowed_users: &HashSet<String>, username: &str) -> bool 
     false
 }
 
+/// Checks whether any of the user's groups is permitted by a set of user/group patterns.
+/// Supports "@group_name", "group:group_name", or raw "group_name" in allowed targets.
+#[must_use]
+pub fn is_any_group_allowed(allowed_targets: &HashSet<String>, groups: &[String]) -> bool {
+    if allowed_targets.contains("*") {
+        return true;
+    }
+    for group in groups {
+        let at_group = format!("@{group}");
+        let colon_group = format!("group:{group}");
+        if allowed_targets.contains(group)
+            || allowed_targets.contains(&at_group)
+            || allowed_targets.contains(&colon_group)
+        {
+            return true;
+        }
+        for pat in allowed_targets {
+            let pat_stripped = pat
+                .strip_prefix('@')
+                .or_else(|| pat.strip_prefix("group:"))
+                .unwrap_or(pat);
+            if matches_glob(pat_stripped, group) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,5 +123,18 @@ mod tests {
         assert!(is_user_allowed(&allowed, "team-ml"));
         assert!(is_user_allowed(&allowed, "alice"));
         assert!(!is_user_allowed(&allowed, "bob"));
+    }
+
+    #[test]
+    fn test_is_any_group_allowed() {
+        let mut allowed = HashSet::new();
+        allowed.insert("@engineering".to_string());
+        allowed.insert("group:research".to_string());
+        allowed.insert("students-*".to_string());
+
+        assert!(is_any_group_allowed(&allowed, &["engineering".to_string()]));
+        assert!(is_any_group_allowed(&allowed, &["research".to_string()]));
+        assert!(is_any_group_allowed(&allowed, &["students-2026".to_string()]));
+        assert!(!is_any_group_allowed(&allowed, &["marketing".to_string()]));
     }
 }

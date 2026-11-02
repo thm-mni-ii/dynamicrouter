@@ -1023,3 +1023,110 @@ pub async fn cleanup_admin_system_logs(older_than_secs: i64) -> Result<i64, Stri
     let body = handle_json_response::<CleanResult>(res).await?;
     Ok(body.deleted_count)
 }
+
+// --------------------------------------------------------------------------
+// Admin Groups (/api/groups)
+// --------------------------------------------------------------------------
+#[derive(Deserialize)]
+struct SingleGroupResponse {
+    group: Group,
+}
+
+#[derive(Deserialize)]
+struct SingleRuleResponse {
+    rule: GroupOidcRule,
+}
+
+pub async fn fetch_admin_groups() -> Result<Vec<GroupSummary>, String> {
+    let url = format!("{}/api/groups", get_origin());
+    let req = apply_auth(client().get(&url));
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    let body = handle_json_response::<GroupsListResponse>(res).await?;
+    Ok(body.groups)
+}
+
+pub async fn create_admin_group(payload: &CreateGroupPayload) -> Result<Group, String> {
+    let url = format!("{}/api/groups", get_origin());
+    let req = apply_auth(client().post(&url).json(payload));
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    let body = handle_json_response::<SingleGroupResponse>(res).await?;
+    Ok(body.group)
+}
+
+pub async fn fetch_admin_group_detail(id: &str) -> Result<GroupDetail, String> {
+    let url = format!("{}/api/groups/{id}", get_origin());
+    let req = apply_auth(client().get(&url));
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    handle_json_response(res).await
+}
+
+pub async fn update_admin_group(id: &str, payload: &UpdateGroupPayload) -> Result<Group, String> {
+    let url = format!("{}/api/groups/{id}", get_origin());
+    let req = apply_auth(client().put(&url).json(payload));
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    let body = handle_json_response::<SingleGroupResponse>(res).await?;
+    Ok(body.group)
+}
+
+pub async fn delete_admin_group(id: &str) -> Result<(), String> {
+    let url = format!("{}/api/groups/{id}", get_origin());
+    let req = apply_auth(client().delete(&url));
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("Delete group failed: {}", res.status()))
+    }
+}
+
+pub async fn add_admin_group_member(group_id: &str, username: &str) -> Result<(), String> {
+    let url = format!("{}/api/groups/{group_id}/members", get_origin());
+    let req = apply_auth(client().post(&url).json(&serde_json::json!({ "username": username })));
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        let text = res.text().await.unwrap_or_default();
+        Err(format!("Add member failed: {text}"))
+    }
+}
+
+pub async fn remove_admin_group_member(group_id: &str, username: &str) -> Result<(), String> {
+    let url = format!("{}/api/groups/{group_id}/members/{username}", get_origin());
+    let req = apply_auth(client().delete(&url));
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("Remove member failed: {}", res.status()))
+    }
+}
+
+pub async fn create_admin_group_rule(
+    group_id: &str,
+    payload: &CreateGroupOidcRulePayload,
+) -> Result<GroupOidcRule, String> {
+    let url = format!("{}/api/groups/{group_id}/rules", get_origin());
+    let req = apply_auth(client().post(&url).json(payload));
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    let body = handle_json_response::<SingleRuleResponse>(res).await?;
+    Ok(body.rule)
+}
+
+pub async fn delete_admin_group_rule(group_id: &str, rule_id: &str) -> Result<(), String> {
+    let url = format!("{}/api/groups/{group_id}/rules/{rule_id}", get_origin());
+    let req = apply_auth(client().delete(&url));
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("Delete rule failed: {}", res.status()))
+    }
+}
+
+pub async fn test_cel_rule(payload: &CelTestRequest) -> Result<CelTestResponse, String> {
+    let url = format!("{}/api/groups/rules/test", get_origin());
+    let req = apply_auth(client().post(&url).json(payload));
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    handle_json_response(res).await
+}

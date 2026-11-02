@@ -16,6 +16,7 @@ use serde_json::json;
 pub struct RateLimitQueryFilter {
     pub user: Option<String>,
     pub model: Option<String>,
+    pub group: Option<String>,
 }
 
 pub fn rate_limits_routes() -> Router {
@@ -34,14 +35,18 @@ async fn list_rate_limits(
     _admin: AdminUser,
     Query(filter): Query<RateLimitQueryFilter>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let rules = get_all_rate_limits(filter.user.as_deref(), filter.model.as_deref())
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to fetch rate limits: {e}") })),
-            )
-        })?;
+    let rules = get_all_rate_limits(
+        filter.user.as_deref(),
+        filter.model.as_deref(),
+        filter.group.as_deref(),
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("Failed to fetch rate limits: {e}") })),
+        )
+    })?;
 
     Ok(Json(json!({ "rate_limits": rules })))
 }
@@ -50,8 +55,12 @@ async fn get_all_rate_limit_usage(
     _admin: AdminUser,
     Query(filter): Query<RateLimitQueryFilter>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let rules = get_all_rate_limits(filter.user.as_deref(), filter.model.as_deref())
-        .await
+    let rules = get_all_rate_limits(
+        filter.user.as_deref(),
+        filter.model.as_deref(),
+        filter.group.as_deref(),
+    )
+    .await
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,

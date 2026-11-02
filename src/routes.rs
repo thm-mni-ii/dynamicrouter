@@ -38,18 +38,24 @@ pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusC
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    let group_allowed_models = crate::db::group::get_allowed_models_for_groups(&authorization.groups)
+        .await
+        .unwrap_or_default();
+
     for model in db_models {
         if model.id == "*" || crate::utils::is_glob_pattern(&model.id) || model.hidden.unwrap_or(false) {
             continue;
         }
         if let Some(users) = &model.limit_to_users
             && !crate::utils::is_user_allowed(users, &authorization.username)
+            && !crate::utils::is_any_group_allowed(users, &authorization.groups)
         {
             continue;
         }
-        // User account model restrictions
+        // User account & group model restrictions (additive union)
         if let Some(limit_to) = &authorization.user.limit_to_models
             && !crate::utils::is_model_allowed(limit_to, &model.id)
+            && !crate::utils::is_model_allowed(&group_allowed_models, &model.id)
         {
             continue;
         }
@@ -88,6 +94,8 @@ pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusC
                 if let Some(limit_to) = &authorization.user.limit_to_models
                     && !crate::utils::is_model_allowed(limit_to, &full_id)
                     && !crate::utils::is_model_allowed(limit_to, m)
+                    && !crate::utils::is_model_allowed(&group_allowed_models, &full_id)
+                    && !crate::utils::is_model_allowed(&group_allowed_models, m)
                 {
                     continue;
                 }
@@ -113,7 +121,11 @@ pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusC
 
 #[derive(Debug, Clone)]
 pub enum TokenAuthResult {
-    Valid { user: User, token: Option<UserToken> },
+    Valid {
+        user: User,
+        token: Option<UserToken>,
+        groups: Vec<String>,
+    },
     UserExpired(String),
     TokenExpired(String),
     IpForbidden(String),
@@ -132,12 +144,26 @@ pub async fn check_token_auth_with_ip(
                 .as_deref()
                 .is_some_and(|e| crate::config::CONFIG.is_user_admin_by_config(e));
 
+        let mut groups: Vec<String> = session.groups.into_iter().collect();
+        if let Ok(manual) = crate::db::group::get_user_manual_groups(&session.username).await {
+            for mg in manual {
+                if !groups.contains(&mg) {
+                    groups.push(mg);
+                }
+            }
+        }
+        groups.sort();
+
         if let Ok(Some(mut user)) = crate::db::user::get_user_by_username(&session.username).await {
             if user.is_expired() {
                 return TokenAuthResult::UserExpired(user.username);
             }
             user.is_admin = user.is_admin || is_admin;
-            return TokenAuthResult::Valid { user, token: None };
+            return TokenAuthResult::Valid {
+                user,
+                token: None,
+                groups,
+            };
         }
         return TokenAuthResult::Valid {
             user: User {
@@ -148,6 +174,7 @@ pub async fn check_token_auth_with_ip(
                 expires_at: None,
             },
             token: None,
+            groups,
         };
     }
 
@@ -168,10 +195,14 @@ pub async fn check_token_auth_with_ip(
                 client_ip
             ));
         }
+        let groups = crate::db::group::get_user_manual_groups(&user.username)
+            .await
+            .unwrap_or_default();
         user.is_admin = user.is_admin || crate::config::CONFIG.is_user_admin_by_config(&user.username);
         return TokenAuthResult::Valid {
             user,
             token: Some(user_token),
+            groups,
         };
     }
 
@@ -192,10 +223,14 @@ pub async fn check_token_auth_with_ip(
                 client_ip
             ));
         }
+        let groups = crate::db::group::get_user_manual_groups(&user.username)
+            .await
+            .unwrap_or_default();
         user.is_admin = user.is_admin || crate::config::CONFIG.is_user_admin_by_config(&user.username);
         return TokenAuthResult::Valid {
             user,
             token: Some(user_token),
+            groups,
         };
     }
 
@@ -203,8 +238,15 @@ pub async fn check_token_auth_with_ip(
         if user.is_expired() {
             return TokenAuthResult::UserExpired(user.username);
         }
+        let groups = crate::db::group::get_user_manual_groups(&user.username)
+            .await
+            .unwrap_or_default();
         user.is_admin = user.is_admin || crate::config::CONFIG.is_user_admin_by_config(&user.username);
-        return TokenAuthResult::Valid { user, token: None };
+        return TokenAuthResult::Valid {
+            user,
+            token: None,
+            groups,
+        };
     }
 
     TokenAuthResult::Invalid
@@ -225,6 +267,7 @@ pub struct Authorization {
     pub username: String,
     pub user: User,
     pub token: Option<UserToken>,
+    pub groups: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -277,12 +320,13 @@ impl<S: Send + Sync> FromRequestParts<S> for Authorization {
         let client_ip = extract_client_ip(parts);
 
         match check_token_auth_with_ip(token, client_ip).await {
-            TokenAuthResult::Valid { user, token: tok } => {
+            TokenAuthResult::Valid { user, token: tok, groups } => {
                 let username = user.username.clone();
                 Ok(Authorization {
                     username,
                     user,
                     token: tok,
+                    groups,
                 })
             }
             TokenAuthResult::UserExpired(username) => {
@@ -354,12 +398,19 @@ async fn extract_models(
             get_model_config(&model_str).await.unwrap_or(None)
         };
 
-        // 1. Check user model limits
+        let group_allowed_models = crate::db::group::get_allowed_models_for_groups(&authorization.groups)
+            .await
+            .unwrap_or_default();
+
+        // 1. Check user model limits (additive union with group permissions)
         let user_allowed = authorization
             .user
             .limit_to_models
             .as_ref()
-            .is_none_or(|limited| crate::utils::is_model_allowed(limited, &model_str));
+            .is_none_or(|limited| {
+                crate::utils::is_model_allowed(limited, &model_str)
+                    || crate::utils::is_model_allowed(&group_allowed_models, &model_str)
+            });
 
         // 2. Check token model limits
         let token_allowed = authorization
@@ -380,9 +431,12 @@ async fn extract_models(
             if !conf
                 .limit_to_users
                 .as_ref()
-                .is_none_or(|limited| crate::utils::is_user_allowed(limited, &authorization.username))
+                .is_none_or(|limited| {
+                    crate::utils::is_user_allowed(limited, &authorization.username)
+                        || crate::utils::is_any_group_allowed(limited, &authorization.groups)
+                })
             {
-                warn!("{} is not in allowed users for {model}", authorization.username);
+                warn!("{} is not in allowed users or groups for {model}", authorization.username);
                 return Err(StatusCode::FORBIDDEN);
             }
         } else if !matches_openai {
@@ -414,7 +468,14 @@ async fn generate(
     let mut rate_headers = Vec::new();
     for model in &models {
         let model_str = model.to_string();
-        match crate::rate_limit::check_rate_limits(&authorization.username, &model_str, prompt_tokens).await {
+        match crate::rate_limit::check_rate_limits_for_user_and_groups(
+            &authorization.username,
+            &authorization.groups,
+            &model_str,
+            prompt_tokens,
+        )
+        .await
+        {
             Ok(headers) => {
                 rate_headers.extend(headers);
             }

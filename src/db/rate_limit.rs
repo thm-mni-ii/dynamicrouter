@@ -8,6 +8,8 @@ pub struct RateLimitRule {
     pub id: String,
     pub user: Option<String>,
     pub token_hash: Option<String>,
+    pub group_name: Option<String>,
+    pub scope_mode: String,
     pub model: Option<String>,
     pub time_window: String,
     pub limit_value: i64,
@@ -19,6 +21,8 @@ pub struct RateLimitRule {
 pub struct CreateRateLimitPayload {
     pub user: Option<String>,
     pub token_hash: Option<String>,
+    pub group_name: Option<String>,
+    pub scope_mode: Option<String>,
     pub model: Option<String>,
     pub time_window: String,
     pub limit_value: i64,
@@ -29,6 +33,8 @@ pub struct CreateRateLimitPayload {
 pub struct UpdateRateLimitPayload {
     pub user: Option<String>,
     pub token_hash: Option<String>,
+    pub group_name: Option<String>,
+    pub scope_mode: Option<String>,
     pub model: Option<String>,
     pub time_window: String,
     pub limit_value: i64,
@@ -40,6 +46,8 @@ pub struct RateLimitUsageInfo {
     pub id: String,
     pub user: Option<String>,
     pub token_hash: Option<String>,
+    pub group_name: Option<String>,
+    pub scope_mode: String,
     pub model: Option<String>,
     pub time_window: String,
     pub limit_value: i64,
@@ -79,6 +87,13 @@ pub fn normalize_unit(unit: Option<&str>) -> String {
         Some("prompt_tokens" | "input_tokens") => "prompt_tokens".to_string(),
         Some("completion_tokens" | "output_tokens") => "completion_tokens".to_string(),
         _ => "tokens".to_string(),
+    }
+}
+
+pub fn normalize_scope_mode(mode: Option<&str>) -> String {
+    match mode.map(str::to_lowercase).as_deref() {
+        Some("shared_group" | "shared" | "group") => "shared_group".to_string(),
+        _ => "per_user".to_string(),
     }
 }
 
@@ -125,6 +140,8 @@ pub async fn create_rate_limit(payload: &CreateRateLimitPayload) -> Result<RateL
     let time_window = normalize_time_window(&payload.time_window);
     let unit = normalize_unit(payload.unit.as_deref());
     let user = normalize_target_list(payload.user.as_deref());
+    let group_name = normalize_target_list(payload.group_name.as_deref());
+    let scope_mode = normalize_scope_mode(payload.scope_mode.as_deref());
     let model = normalize_target_list(payload.model.as_deref());
 
     let token_hash = payload.token_hash.as_deref().and_then(|t| {
@@ -140,13 +157,15 @@ pub async fn create_rate_limit(payload: &CreateRateLimitPayload) -> Result<RateL
 
     sqlx::query(
         r"
-        INSERT INTO rate_limits (id, user, token_hash, model, time_window, limit_value, unit, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO rate_limits (id, user, token_hash, group_name, scope_mode, model, time_window, limit_value, unit, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ",
     )
     .bind(&id)
     .bind(&user)
     .bind(&token_hash)
+    .bind(&group_name)
+    .bind(&scope_mode)
     .bind(&model)
     .bind(&time_window)
     .bind(payload.limit_value)
@@ -159,6 +178,8 @@ pub async fn create_rate_limit(payload: &CreateRateLimitPayload) -> Result<RateL
         id,
         user,
         token_hash,
+        group_name,
+        scope_mode,
         model,
         time_window,
         limit_value: payload.limit_value,
@@ -174,6 +195,8 @@ pub async fn update_rate_limit(
     let time_window = normalize_time_window(&payload.time_window);
     let unit = normalize_unit(payload.unit.as_deref());
     let user = normalize_target_list(payload.user.as_deref());
+    let group_name = normalize_target_list(payload.group_name.as_deref());
+    let scope_mode = normalize_scope_mode(payload.scope_mode.as_deref());
     let model = normalize_target_list(payload.model.as_deref());
 
     let token_hash = payload.token_hash.as_deref().and_then(|t| {
@@ -188,12 +211,14 @@ pub async fn update_rate_limit(
     let res = sqlx::query(
         r"
         UPDATE rate_limits
-        SET user = ?, token_hash = ?, model = ?, time_window = ?, limit_value = ?, unit = ?
+        SET user = ?, token_hash = ?, group_name = ?, scope_mode = ?, model = ?, time_window = ?, limit_value = ?, unit = ?
         WHERE id = ?
         ",
     )
     .bind(&user)
     .bind(&token_hash)
+    .bind(&group_name)
+    .bind(&scope_mode)
     .bind(&model)
     .bind(&time_window)
     .bind(payload.limit_value)
@@ -219,7 +244,7 @@ pub async fn delete_rate_limit(id: &str) -> Result<bool, anyhow::Error> {
 
 pub async fn get_rate_limit_by_id(id: &str) -> Result<Option<RateLimitRule>, anyhow::Error> {
     let rule = sqlx::query_as::<_, RateLimitRule>(
-        "SELECT id, user, token_hash, model, time_window, limit_value, unit, created_at FROM rate_limits WHERE id = ?",
+        "SELECT id, user, token_hash, group_name, scope_mode, model, time_window, limit_value, unit, created_at FROM rate_limits WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(get_executor())
@@ -231,9 +256,10 @@ pub async fn get_rate_limit_by_id(id: &str) -> Result<Option<RateLimitRule>, any
 pub async fn get_all_rate_limits(
     user_filter: Option<&str>,
     model_filter: Option<&str>,
+    group_filter: Option<&str>,
 ) -> Result<Vec<RateLimitRule>, anyhow::Error> {
     let rules = sqlx::query_as::<_, RateLimitRule>(
-        "SELECT id, user, token_hash, model, time_window, limit_value, unit, created_at FROM rate_limits ORDER BY created_at DESC",
+        "SELECT id, user, token_hash, group_name, scope_mode, model, time_window, limit_value, unit, created_at FROM rate_limits ORDER BY created_at DESC",
     )
     .fetch_all(get_executor())
     .await?;
@@ -259,6 +285,15 @@ pub async fn get_all_rate_limits(
                     return false;
                 }
             }
+            if let Some(g) = group_filter {
+                if g == "*" {
+                    if rule.group_name.is_some() {
+                        return false;
+                    }
+                } else if !rule.group_name.as_deref().map_or(false, |pat| matches_target_list(pat, g)) {
+                    return false;
+                }
+            }
             true
         })
         .collect();
@@ -266,13 +301,14 @@ pub async fn get_all_rate_limits(
     Ok(filtered)
 }
 
-pub async fn get_matching_rate_limits(
+pub async fn get_matching_rate_limits_for_user_and_groups(
     username: &str,
+    groups: &[String],
     model_name: &str,
 ) -> Result<Vec<RateLimitRule>, anyhow::Error> {
     let rules = sqlx::query_as::<_, RateLimitRule>(
         r"
-        SELECT id, user, token_hash, model, time_window, limit_value, unit, created_at
+        SELECT id, user, token_hash, group_name, scope_mode, model, time_window, limit_value, unit, created_at
         FROM rate_limits
         WHERE token_hash IS NULL
         ORDER BY created_at ASC
@@ -284,11 +320,15 @@ pub async fn get_matching_rate_limits(
     let filtered = rules
         .into_iter()
         .filter(|rule| {
-            let user_matches = match &rule.user {
-                None => true,
-                Some(u) => matches_target_list(u, username),
+            let target_matches = match (&rule.user, &rule.group_name) {
+                (None, None) => true,
+                (Some(u), None) => matches_target_list(u, username),
+                (None, Some(g)) => groups.iter().any(|ug| matches_target_list(g, ug)),
+                (Some(u), Some(g)) => {
+                    matches_target_list(u, username) && groups.iter().any(|ug| matches_target_list(g, ug))
+                }
             };
-            if !user_matches {
+            if !target_matches {
                 return false;
             }
             match &rule.model {
@@ -301,12 +341,23 @@ pub async fn get_matching_rate_limits(
     Ok(filtered)
 }
 
-pub async fn get_rate_limits_for_user(
+pub async fn get_matching_rate_limits(
     username: &str,
+    model_name: &str,
+) -> Result<Vec<RateLimitRule>, anyhow::Error> {
+    let groups = crate::db::group::get_user_manual_groups(username)
+        .await
+        .unwrap_or_default();
+    get_matching_rate_limits_for_user_and_groups(username, &groups, model_name).await
+}
+
+pub async fn get_rate_limits_for_user_and_groups(
+    username: &str,
+    groups: &[String],
 ) -> Result<Vec<RateLimitRule>, anyhow::Error> {
     let rules = sqlx::query_as::<_, RateLimitRule>(
         r"
-        SELECT id, user, token_hash, model, time_window, limit_value, unit, created_at
+        SELECT id, user, token_hash, group_name, scope_mode, model, time_window, limit_value, unit, created_at
         FROM rate_limits
         WHERE token_hash IS NULL
         ORDER BY created_at ASC
@@ -317,13 +368,26 @@ pub async fn get_rate_limits_for_user(
 
     let filtered = rules
         .into_iter()
-        .filter(|rule| match &rule.user {
-            None => true,
-            Some(u) => matches_target_list(u, username),
+        .filter(|rule| match (&rule.user, &rule.group_name) {
+            (None, None) => true,
+            (Some(u), None) => matches_target_list(u, username),
+            (None, Some(g)) => groups.iter().any(|ug| matches_target_list(g, ug)),
+            (Some(u), Some(g)) => {
+                matches_target_list(u, username) && groups.iter().any(|ug| matches_target_list(g, ug))
+            }
         })
         .collect();
 
     Ok(filtered)
+}
+
+pub async fn get_rate_limits_for_user(
+    username: &str,
+) -> Result<Vec<RateLimitRule>, anyhow::Error> {
+    let groups = crate::db::group::get_user_manual_groups(username)
+        .await
+        .unwrap_or_default();
+    get_rate_limits_for_user_and_groups(username, &groups).await
 }
 
 pub async fn get_rate_limits_strictly_for_user(
@@ -331,7 +395,7 @@ pub async fn get_rate_limits_strictly_for_user(
 ) -> Result<Vec<RateLimitRule>, anyhow::Error> {
     let rules = sqlx::query_as::<_, RateLimitRule>(
         r"
-        SELECT id, user, token_hash, model, time_window, limit_value, unit, created_at
+        SELECT id, user, token_hash, group_name, scope_mode, model, time_window, limit_value, unit, created_at
         FROM rate_limits
         WHERE token_hash IS NULL
         ORDER BY created_at ASC
@@ -355,7 +419,7 @@ pub async fn delete_rate_limits_for_user(
     username: &str,
 ) -> Result<(), anyhow::Error> {
     let rules = sqlx::query_as::<_, RateLimitRule>(
-        "SELECT id, user, token_hash, model, time_window, limit_value, unit, created_at FROM rate_limits WHERE token_hash IS NULL AND user IS NOT NULL",
+        "SELECT id, user, token_hash, group_name, scope_mode, model, time_window, limit_value, unit, created_at FROM rate_limits WHERE token_hash IS NULL AND user IS NOT NULL",
     )
     .fetch_all(get_executor())
     .await?;
@@ -390,7 +454,7 @@ pub async fn get_matching_token_rate_limits(
 ) -> Result<Vec<RateLimitRule>, anyhow::Error> {
     let rules = sqlx::query_as::<_, RateLimitRule>(
         r"
-        SELECT id, user, token_hash, model, time_window, limit_value, unit, created_at
+        SELECT id, user, token_hash, group_name, scope_mode, model, time_window, limit_value, unit, created_at
         FROM rate_limits
         WHERE token_hash = ?
         ORDER BY created_at ASC
@@ -417,7 +481,7 @@ pub async fn get_rate_limits_for_token(
 ) -> Result<Vec<RateLimitRule>, anyhow::Error> {
     let rules = sqlx::query_as::<_, RateLimitRule>(
         r"
-        SELECT id, user, token_hash, model, time_window, limit_value, unit, created_at
+        SELECT id, user, token_hash, group_name, scope_mode, model, time_window, limit_value, unit, created_at
         FROM rate_limits
         WHERE token_hash = ?
         ORDER BY created_at ASC
@@ -544,8 +608,27 @@ pub async fn calculate_usage_for_rule(
         _ => ModelFilter::Any,
     };
 
+    let shared_group_members: Vec<String>;
     let target_filter = if let Some(ref th) = rule.token_hash {
         UserOrTokenFilter::Token(th.trim())
+    } else if let Some(ref gname) = rule.group_name {
+        if rule.scope_mode == "shared_group" {
+            let mut members = crate::db::group::get_all_group_members_for_group_name(gname)
+                .await
+                .unwrap_or_default();
+            if !target_user.is_empty() && !members.iter().any(|m| m == target_user) {
+                members.push(target_user.to_string());
+            }
+            shared_group_members = members;
+            if shared_group_members.is_empty() {
+                UserOrTokenFilter::UserList(vec![target_user])
+            } else {
+                let refs: Vec<&str> = shared_group_members.iter().map(|s| s.as_str()).collect();
+                UserOrTokenFilter::UserList(refs)
+            }
+        } else {
+            UserOrTokenFilter::UserList(vec![target_user])
+        }
     } else if !target_user.is_empty() && target_user != "*" {
         let items: Vec<&str> = target_user
             .split(',')
@@ -604,6 +687,8 @@ pub async fn calculate_usage_for_rule(
         id: rule.id.clone(),
         user: rule.user.clone(),
         token_hash: rule.token_hash.clone(),
+        group_name: rule.group_name.clone(),
+        scope_mode: rule.scope_mode.clone(),
         model: rule.model.clone(),
         time_window: rule.time_window.clone(),
         limit_value: rule.limit_value,

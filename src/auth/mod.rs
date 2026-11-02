@@ -1,3 +1,4 @@
+pub mod cel;
 pub mod extractor;
 pub mod oidc;
 pub mod routes;

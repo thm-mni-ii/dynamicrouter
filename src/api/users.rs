@@ -146,6 +146,8 @@ async fn create_new_user(
                 let _ = create_rate_limit(&CreateRateLimitPayload {
                     user: Some(payload.username.clone()),
                     token_hash: None,
+                    group_name: None,
+                    scope_mode: None,
                     model: r.model,
                     time_window: r.time_window,
                     limit_value: r.limit_value,
@@ -210,6 +212,8 @@ async fn update_existing_user(
                 let _ = create_rate_limit(&CreateRateLimitPayload {
                     user: Some(username.clone()),
                     token_hash: None,
+                    group_name: None,
+                    scope_mode: None,
                     model: r.model,
                     time_window: r.time_window,
                     limit_value: r.limit_value,
@@ -316,6 +320,8 @@ async fn create_user_token(
                 id: rule.id.clone(),
                 user: rule.user.clone(),
                 token_hash: rule.token_hash.clone(),
+                group_name: rule.group_name.clone(),
+                scope_mode: rule.scope_mode.clone(),
                 model: rule.model.clone(),
                 time_window: rule.time_window.clone(),
                 limit_value: rule.limit_value,

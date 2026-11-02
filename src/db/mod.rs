@@ -2,6 +2,7 @@ pub mod alias;
 pub mod backend;
 pub mod connection;
 pub mod factory;
+pub mod group;
 pub mod instance;
 pub mod legacy_migration;
 pub mod model;

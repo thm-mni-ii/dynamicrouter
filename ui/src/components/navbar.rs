@@ -194,6 +194,19 @@ pub fn Navbar(
                                         }
                                     }
                                     button {
+                                        class: if *active_tab.read() == ActiveTab::AdminGroups { "admin-dropdown-item active" } else { "admin-dropdown-item" },
+                                        onclick: move |_| {
+                                            active_tab.set(ActiveTab::AdminGroups);
+                                            show_admin_menu.set(false);
+                                        },
+                                        div { class: "admin-item-icon", IconUsers { size: 16 } }
+                                        div {
+                                            class: "admin-item-text",
+                                            span { class: "admin-item-title", "Groups" }
+                                            span { class: "admin-item-desc", "Team memberships & OIDC CEL rules" }
+                                        }
+                                    }
+                                    button {
                                         class: if *active_tab.read() == ActiveTab::AdminRateLimits { "admin-dropdown-item active" } else { "admin-dropdown-item" },
                                         onclick: move |_| {
                                             active_tab.set(ActiveTab::AdminRateLimits);

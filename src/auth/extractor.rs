@@ -28,6 +28,7 @@ pub struct AuthUser {
     pub token: String,
     pub auth_kind: AuthKind,
     pub token_hash: Option<String>,
+    pub groups: Vec<String>,
 }
 
 impl AuthUser {
@@ -173,6 +174,16 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                     .as_deref()
                     .is_some_and(|e| CONFIG.is_user_admin_by_config(e));
 
+            let mut groups: Vec<String> = session.groups.into_iter().collect();
+            if let Ok(manual) = crate::db::group::get_user_manual_groups(&session.username).await {
+                for mg in manual {
+                    if !groups.contains(&mg) {
+                        groups.push(mg);
+                    }
+                }
+            }
+            groups.sort();
+
             return Ok(AuthUser {
                 username: session.username,
                 email: session.email,
@@ -181,6 +192,7 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                 token: raw_token,
                 auth_kind: AuthKind::Session,
                 token_hash: None,
+                groups,
             });
         }
 
@@ -202,6 +214,9 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                     client_ip
                 )));
             }
+            let groups = crate::db::group::get_user_manual_groups(&user.username)
+                .await
+                .unwrap_or_default();
             // Token authentication does not allow any admin actions
             return Ok(AuthUser {
                 username: user.username.clone(),
@@ -211,6 +226,7 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                 token: raw_token,
                 auth_kind: AuthKind::Token,
                 token_hash: Some(user_token.token_hash),
+                groups,
             });
         }
 
@@ -232,6 +248,9 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                     client_ip
                 )));
             }
+            let groups = crate::db::group::get_user_manual_groups(&user.username)
+                .await
+                .unwrap_or_default();
             return Ok(AuthUser {
                 username: user.username.clone(),
                 email: None,
@@ -240,6 +259,7 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                 token: raw_token,
                 auth_kind: AuthKind::Token,
                 token_hash: Some(user_token.token_hash),
+                groups,
             });
         }
 
@@ -250,6 +270,9 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                     user.username
                 )));
             }
+            let groups = crate::db::group::get_user_manual_groups(&user.username)
+                .await
+                .unwrap_or_default();
             return Ok(AuthUser {
                 username: user.username.clone(),
                 email: None,
@@ -258,6 +281,7 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                 token: raw_token,
                 auth_kind: AuthKind::Token,
                 token_hash: None,
+                groups,
             });
         }
 
@@ -292,6 +316,10 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                     .as_deref()
                     .is_some_and(|e| CONFIG.is_user_admin_by_config(e));
 
+            let groups = crate::db::group::get_user_manual_groups(&username)
+                .await
+                .unwrap_or_default();
+
             return Ok(AuthUser {
                 username,
                 email: claims.email,
@@ -300,6 +328,7 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                 token: raw_token,
                 auth_kind: AuthKind::Session,
                 token_hash: None,
+                groups,
             });
         }
 

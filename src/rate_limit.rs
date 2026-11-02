@@ -1,5 +1,6 @@
 use crate::db::rate_limit::{
-    calculate_usage_for_rule, get_matching_rate_limits, get_matching_token_rate_limits,
+    calculate_usage_for_rule,
+    get_matching_rate_limits_for_user_and_groups, get_matching_token_rate_limits,
     normalize_unit, window_duration_seconds,
 };
 use axum::body::Body;
@@ -103,12 +104,13 @@ impl IntoResponse for RateLimitRejection {
     }
 }
 
-pub async fn check_rate_limits(
+pub async fn check_rate_limits_for_user_and_groups(
     username: &str,
+    groups: &[String],
     model_name: &str,
     prompt_tokens: i64,
 ) -> Result<Vec<(String, String)>, RateLimitRejection> {
-    let rules = match get_matching_rate_limits(username, model_name).await {
+    let rules = match get_matching_rate_limits_for_user_and_groups(username, groups, model_name).await {
         Ok(r) => r,
         Err(e) => {
             warn!("Failed to query rate limit rules for {username}: {e}");
@@ -260,6 +262,17 @@ pub async fn check_rate_limits(
     }
 
     Ok(response_headers)
+}
+
+pub async fn check_rate_limits(
+    username: &str,
+    model_name: &str,
+    prompt_tokens: i64,
+) -> Result<Vec<(String, String)>, RateLimitRejection> {
+    let groups = crate::db::group::get_user_manual_groups(username)
+        .await
+        .unwrap_or_default();
+    check_rate_limits_for_user_and_groups(username, &groups, model_name, prompt_tokens).await
 }
 
 pub async fn check_token_rate_limits(

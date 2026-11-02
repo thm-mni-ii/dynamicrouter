@@ -138,6 +138,7 @@ pub fn App() -> Element {
                         ActiveTab::AdminOpenAiApis => rsx! { AdminOpenAiApisView { toasts } },
                         ActiveTab::AdminBackends => rsx! { AdminBackendsView { toasts } },
                         ActiveTab::AdminUsers => rsx! { AdminUsersView { toasts } },
+                        ActiveTab::AdminGroups => rsx! { AdminGroupsView { toasts } },
                         ActiveTab::AdminRateLimits => rsx! { AdminRateLimitsView { toasts } },
                         ActiveTab::AdminFactoryGpus => rsx! { AdminFactoryGpusView { toasts } },
                         ActiveTab::AdminInstances => rsx! { AdminInstancesView { toasts } },

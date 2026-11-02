@@ -109,6 +109,9 @@ pub fn AdminRateLimitsView(toasts: Signal<Vec<Toast>>) -> Element {
             RateLimitRecord {
                 id: String::new(),
                 user: None,
+                token_hash: None,
+                group_name: None,
+                scope_mode: "per_user".to_string(),
                 model: None,
                 time_window: "minute".to_string(),
                 limit_value: 100_000,
@@ -185,6 +188,9 @@ pub fn AdminRateLimitsView(toasts: Signal<Vec<Toast>>) -> Element {
         let record = RateLimitRecord {
             id: if is_new { String::new() } else { current.id },
             user: user_val,
+            token_hash: current.token_hash,
+            group_name: current.group_name,
+            scope_mode: current.scope_mode,
             model: model_val,
             time_window: window_val,
             limit_value: parsed_limit,

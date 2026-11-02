@@ -595,18 +595,25 @@ async fn handle_callback(
         }
     };
 
+    let mut raw_claims_map = serde_json::Map::new();
     let mut claims = None;
     if let Some(ref id_token) = token_res.id_token
         && let Some(payload) = decode_jwt_payload_unverified(id_token)
     {
+        if let Some(obj) = payload.as_object() {
+            raw_claims_map.extend(obj.clone());
+        }
         claims = Some(extract_claims_from_json(&payload));
     }
 
     if let Some(ref userinfo_endpoint) = discovery.userinfo_endpoint
-        && let Ok(u_claims) = OIDC
-            .fetch_userinfo(userinfo_endpoint, &token_res.access_token)
+        && let Ok((u_claims, u_val)) = OIDC
+            .fetch_userinfo_raw(userinfo_endpoint, &token_res.access_token)
             .await
     {
+        if let Some(obj) = u_val.as_object() {
+            raw_claims_map.extend(obj.clone());
+        }
         if let Some(ref mut c) = claims {
             if c.preferred_username.is_none() {
                 c.preferred_username = u_claims.preferred_username;
@@ -619,6 +626,9 @@ async fn handle_callback(
             }
             if let (Some(r1), Some(r2)) = (&mut c.roles, u_claims.roles) {
                 r1.extend(r2);
+            }
+            if let (Some(g1), Some(g2)) = (&mut c.groups, u_claims.groups) {
+                g1.extend(g2);
             }
         } else {
             claims = Some(u_claims);
@@ -710,19 +720,56 @@ async fn handle_callback(
         error!("Failed to auto-create/update user in database: {e}");
     }
 
+    let id_groups = claims.groups.clone().unwrap_or_default();
+    let rule_ctx = crate::auth::cel::OidcRuleContext {
+        sub: sub.clone(),
+        name: name.clone(),
+        preferred_username: preferred_username.clone(),
+        email: email.clone(),
+        roles: roles.clone(),
+        groups: id_groups,
+        claims: serde_json::Value::Object(raw_claims_map),
+    };
+
+    let mut session_groups = std::collections::HashSet::new();
+    if let Ok(active_rules) = crate::db::group::get_all_active_group_oidc_rules().await {
+        for rule in active_rules {
+            if let Ok(program) = crate::auth::cel::compile_cel(&rule.cel_expression) {
+                match crate::auth::cel::evaluate_cel(&program, &rule_ctx) {
+                    Ok(true) => {
+                        session_groups.insert(rule.group_name);
+                    }
+                    Ok(false) => {}
+                    Err(e) => {
+                        warn!("Error evaluating CEL rule '{}' ({}) for user '{}': {e}", rule.id, rule.cel_expression, username);
+                    }
+                }
+            } else {
+                warn!("Invalid compiled CEL expression for rule '{}': {}", rule.id, rule.cel_expression);
+            }
+        }
+    }
+
+    if let Ok(manual_groups) = crate::db::group::get_user_manual_groups(&username).await {
+        for mg in manual_groups {
+            session_groups.insert(mg);
+        }
+    }
+
     let ttl_secs = CONFIG.session_ttl_secs;
     let session_token = SESSIONS
-        .create_session(
+        .create_session_with_groups(
             username.clone(),
             email.clone(),
             name.clone(),
             roles.clone(),
             is_admin,
+            session_groups.clone(),
             ttl_secs,
         )
         .await;
 
-    info!("User '{username}' successfully authenticated via OIDC (is_admin: {is_admin})");
+    info!("User '{username}' successfully authenticated via OIDC (is_admin: {is_admin}, groups: {session_groups:?})");
 
     let cookie_header = format!(
         "session_token={session_token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={ttl_secs}"
@@ -745,6 +792,7 @@ async fn handle_callback(
                 "name": name,
                 "is_admin": is_admin,
                 "roles": roles.into_iter().collect::<Vec<_>>(),
+                "groups": session_groups.into_iter().collect::<Vec<_>>(),
             },
             "expires_in": ttl_secs,
         }))
@@ -798,6 +846,7 @@ async fn auth_me(user: AuthUser) -> Json<serde_json::Value> {
         "is_admin": user.is_admin,
         "is_token_login": user.is_token_login(),
         "token_hash": user.token_hash,
+        "groups": user.groups,
         "models": user.user.as_ref().and_then(|u| u.limit_to_models.clone()),
         "log_request_body": user.user.as_ref().and_then(|u| u.log_request_body),
         "expires_at": user.user.as_ref().and_then(|u| u.expires_at),

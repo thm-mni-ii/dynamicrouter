@@ -423,6 +423,8 @@ pub async fn generate_and_add_user_token(
                 let created_rule = create_rate_limit(&CreateRateLimitPayload {
                     user: Some(username.to_string()),
                     token_hash: Some(hash.clone()),
+                    group_name: None,
+                    scope_mode: None,
                     model: r.model,
                     time_window: r.time_window,
                     limit_value: r.limit_value,
@@ -504,6 +506,8 @@ pub async fn update_user_token_for_user(
                 create_rate_limit(&CreateRateLimitPayload {
                     user: Some(username.to_string()),
                     token_hash: Some(token_hash.to_string()),
+                    group_name: None,
+                    scope_mode: None,
                     model: r.model,
                     time_window: r.time_window,
                     limit_value: r.limit_value,

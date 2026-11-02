@@ -25,6 +25,7 @@ pub struct AuthSessionData {
     pub name: Option<String>,
     pub roles: HashSet<String>,
     pub is_admin: bool,
+    pub groups: HashSet<String>,
     pub created_at: i64,
     pub expires_at: i64,
 }
@@ -37,6 +38,7 @@ struct SessionRow {
     name: Option<String>,
     roles: String,
     is_admin: bool,
+    groups: Option<String>,
     created_at: i64,
     expires_at: i64,
 }
@@ -102,6 +104,28 @@ impl SessionStore {
         is_admin: bool,
         ttl_secs: i64,
     ) -> String {
+        self.create_session_with_groups(
+            username,
+            email,
+            name,
+            roles,
+            is_admin,
+            HashSet::new(),
+            ttl_secs,
+        )
+        .await
+    }
+
+    pub async fn create_session_with_groups(
+        &self,
+        username: String,
+        email: Option<String>,
+        name: Option<String>,
+        roles: HashSet<String>,
+        is_admin: bool,
+        groups: HashSet<String>,
+        ttl_secs: i64,
+    ) -> String {
         let now = Utc::now().timestamp();
         let ttl = if ttl_secs > 0 { ttl_secs } else { CONFIG.session_ttl_secs };
         let session_token = format!("dr-sess-{}", generate_random_token(32));
@@ -112,6 +136,7 @@ impl SessionStore {
             name: name.clone(),
             roles: roles.clone(),
             is_admin,
+            groups: groups.clone(),
             created_at: now,
             expires_at: now + ttl,
         };
@@ -127,8 +152,9 @@ impl SessionStore {
         if crate::db::connection::DB.get().is_some() {
             let pool = crate::db::connection::get_executor();
             let roles_json = serde_json::to_string(&roles).unwrap_or_else(|_| "[]".to_string());
+            let groups_json = serde_json::to_string(&groups).unwrap_or_else(|_| "[]".to_string());
             let _ = sqlx::query(
-                "INSERT OR REPLACE INTO sessions (session_token, username, email, name, roles, is_admin, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                "INSERT OR REPLACE INTO sessions (session_token, username, email, name, roles, is_admin, groups, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
             )
             .bind(&session_token)
             .bind(&username)
@@ -136,6 +162,7 @@ impl SessionStore {
             .bind(&name)
             .bind(&roles_json)
             .bind(is_admin)
+            .bind(&groups_json)
             .bind(now)
             .bind(now + ttl)
             .execute(pool)
@@ -167,7 +194,7 @@ impl SessionStore {
                 if crate::db::connection::DB.get().is_some() {
                     let pool = crate::db::connection::get_executor();
                     let row = sqlx::query_as::<_, SessionRow>(
-                        "SELECT session_token, username, email, name, roles, is_admin, created_at, expires_at FROM sessions WHERE session_token = ? AND expires_at > ?"
+                        "SELECT session_token, username, email, name, roles, is_admin, groups, created_at, expires_at FROM sessions WHERE session_token = ? AND expires_at > ?"
                     )
                     .bind(token)
                     .bind(now)
@@ -178,6 +205,10 @@ impl SessionStore {
 
                     if let Some(r) = row {
                         let roles = serde_json::from_str::<HashSet<String>>(&r.roles).unwrap_or_default();
+                        let groups = r
+                            .groups
+                            .and_then(|g| serde_json::from_str::<HashSet<String>>(&g).ok())
+                            .unwrap_or_default();
                         let s = AuthSessionData {
                             session_token: r.session_token,
                             username: r.username,
@@ -185,6 +216,7 @@ impl SessionStore {
                             name: r.name,
                             roles,
                             is_admin: r.is_admin,
+                            groups,
                             created_at: r.created_at,
                             expires_at: r.expires_at,
                         };

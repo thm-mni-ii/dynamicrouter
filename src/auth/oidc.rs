@@ -194,11 +194,11 @@ impl OidcClient {
         Ok(token_res)
     }
 
-    pub async fn fetch_userinfo(
+    pub async fn fetch_userinfo_raw(
         &self,
         userinfo_endpoint: &str,
         access_token: &str,
-    ) -> Result<UserInfoClaims, anyhow::Error> {
+    ) -> Result<(UserInfoClaims, serde_json::Value), anyhow::Error> {
         let res = self
             .client
             .get(userinfo_endpoint)
@@ -215,6 +215,15 @@ impl OidcClient {
 
         let val: serde_json::Value = res.json().await.context("Failed to parse userinfo JSON")?;
         let claims = extract_claims_from_json(&val);
+        Ok((claims, val))
+    }
+
+    pub async fn fetch_userinfo(
+        &self,
+        userinfo_endpoint: &str,
+        access_token: &str,
+    ) -> Result<UserInfoClaims, anyhow::Error> {
+        let (claims, _) = self.fetch_userinfo_raw(userinfo_endpoint, access_token).await?;
         Ok(claims)
     }
 }

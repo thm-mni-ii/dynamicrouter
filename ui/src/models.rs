@@ -15,6 +15,8 @@ pub struct UserProfile {
     pub limit_to_models: Option<HashSet<String>>,
     pub log_request_body: Option<bool>,
     pub expires_at: Option<i64>,
+    #[serde(default)]
+    pub groups: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -320,6 +322,10 @@ pub struct TimeseriesPoint {
 pub struct RateLimitRecord {
     pub id: String,
     pub user: Option<String>,
+    pub token_hash: Option<String>,
+    pub group_name: Option<String>,
+    #[serde(default = "default_scope_mode")]
+    pub scope_mode: String,
     pub model: Option<String>,
     pub time_window: String,
     pub limit_value: i64,
@@ -327,11 +333,18 @@ pub struct RateLimitRecord {
     pub created_at: i64,
 }
 
+fn default_scope_mode() -> String {
+    "per_user".to_string()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RateLimitUsage {
     pub id: String,
     pub user: Option<String>,
     pub token_hash: Option<String>,
+    pub group_name: Option<String>,
+    #[serde(default = "default_scope_mode")]
+    pub scope_mode: String,
     pub model: Option<String>,
     pub time_window: String,
     pub limit_value: i64,
@@ -357,6 +370,97 @@ pub struct RateLimitUsageListResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MyRateLimitsResponse {
     pub rate_limits: Vec<RateLimitUsage>,
+}
+
+// --------------------------------------------------------------------------
+// Group Models
+// --------------------------------------------------------------------------
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct GroupSummary {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub limit_to_models: Option<HashSet<String>>,
+    pub member_count: i64,
+    pub rule_count: i64,
+    pub rate_limit_count: i64,
+    pub created_at: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Group {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub limit_to_models: Option<HashSet<String>>,
+    pub created_at: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct GroupDetail {
+    pub group: Group,
+    pub members: Vec<String>,
+    pub rules: Vec<GroupOidcRule>,
+    pub rate_limits: Vec<RateLimitRecord>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct CreateGroupPayload {
+    pub name: String,
+    pub description: Option<String>,
+    pub limit_to_models: Option<HashSet<String>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct UpdateGroupPayload {
+    pub name: String,
+    pub description: Option<String>,
+    pub limit_to_models: Option<HashSet<String>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct GroupOidcRule {
+    pub id: String,
+    pub group_id: String,
+    pub name: Option<String>,
+    pub cel_expression: String,
+    pub created_at: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct CreateGroupOidcRulePayload {
+    pub name: Option<String>,
+    pub cel_expression: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GroupsListResponse {
+    pub groups: Vec<GroupSummary>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct GroupMembersResponse {
+    pub members: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub struct GroupRulesResponse {
+    pub rules: Vec<GroupOidcRule>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CelTestRequest {
+    pub cel_expression: String,
+    pub sample_claims: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct CelTestResponse {
+    pub valid: bool,
+    pub matched: bool,
+    pub error: Option<String>,
 }
 
 fn deserialize_nullable_string<'de, D>(deserializer: D) -> Result<String, D::Error>

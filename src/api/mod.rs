@@ -1,6 +1,7 @@
 pub mod aliases;
 pub mod backends;
 pub mod factory_gpus;
+pub mod groups;
 pub mod instances;
 pub mod logs;
 pub mod me;
@@ -19,6 +20,7 @@ pub fn api_routes() -> Router {
         .nest("/rate-limits", rate_limits::rate_limits_routes())
         .nest("/openai-apis", openai_apis::openai_apis_routes())
         .nest("/users", users::users_routes())
+        .nest("/groups", groups::groups_routes())
         .nest("/aliases", aliases::aliases_routes())
         .nest("/backends", backends::backends_routes())
         .nest("/backend-model-configs", backends::backend_model_configs_global_routes())

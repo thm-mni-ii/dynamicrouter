@@ -4,8 +4,8 @@ use crate::db::backend::get_all_backend_model_configs;
 use crate::db::model::{ModelHandlerConfig, get_all_models};
 use crate::db::openai_api::get_all_openai_apis;
 use crate::db::rate_limit::{
-    RateLimitUsageInfo, calculate_usage_for_rule, get_matching_rate_limits,
-    get_rate_limits_for_user,
+    RateLimitUsageInfo, calculate_usage_for_rule, get_matching_rate_limits_for_user_and_groups,
+    get_rate_limits_for_user_and_groups,
 };
 use crate::db::request::{
     RequestFilter, get_batch_models_live_stats, get_requests, get_user_metrics,
@@ -41,6 +41,7 @@ async fn get_me(user: AuthUser) -> Json<serde_json::Value> {
         "is_admin": user.is_admin,
         "is_token_login": user.is_token_login(),
         "token_hash": user.token_hash,
+        "groups": user.groups,
         "limit_to_models": user.user.as_ref().and_then(|u| u.limit_to_models.clone()),
         "log_request_body": user.user.as_ref().and_then(|u| u.log_request_body),
         "expires_at": user.user.as_ref().and_then(|u| u.expires_at),
@@ -127,6 +128,8 @@ async fn create_token(
                 id: rule.id.clone(),
                 user: rule.user.clone(),
                 token_hash: rule.token_hash.clone(),
+                group_name: rule.group_name.clone(),
+                scope_mode: rule.scope_mode.clone(),
                 model: rule.model.clone(),
                 time_window: rule.time_window.clone(),
                 limit_value: rule.limit_value,
@@ -242,7 +245,7 @@ async fn delete_token(
 async fn get_my_rate_limits(
     user: AuthUser,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let rules = get_rate_limits_for_user(&user.username)
+    let rules = get_rate_limits_for_user_and_groups(&user.username, &user.groups)
         .await
         .map_err(|e| {
             (
@@ -341,6 +344,10 @@ async fn get_my_models(
         )
     })?;
 
+    let group_allowed_models = crate::db::group::get_allowed_models_for_groups(&user.groups)
+        .await
+        .unwrap_or_default();
+
     for model in db_models {
         if model.id == "*" || crate::utils::is_glob_pattern(&model.id) {
             continue;
@@ -350,11 +357,13 @@ async fn get_my_models(
         }
         if let Some(users) = &model.limit_to_users
             && !crate::utils::is_user_allowed(users, &user.username)
+            && !crate::utils::is_any_group_allowed(users, &user.groups)
         {
             continue;
         }
         if let Some(limit_to) = &user.user.as_ref().and_then(|u| u.limit_to_models.as_ref())
             && !crate::utils::is_model_allowed(limit_to, &model.id)
+            && !crate::utils::is_model_allowed(&group_allowed_models, &model.id)
         {
             continue;
         }
@@ -409,6 +418,8 @@ async fn get_my_models(
                 if let Some(limit_to) = &user.user.as_ref().and_then(|u| u.limit_to_models.as_ref())
                     && !crate::utils::is_model_allowed(limit_to, &full_id)
                     && !crate::utils::is_model_allowed(limit_to, m)
+                    && !crate::utils::is_model_allowed(&group_allowed_models, &full_id)
+                    && !crate::utils::is_model_allowed(&group_allowed_models, m)
                 {
                     continue;
                 }
@@ -478,7 +489,7 @@ async fn get_my_models(
 
         // Calculate rate limits for this model
         let mut model_rate_limits = Vec::new();
-        if let Ok(rules) = get_matching_rate_limits(&user.username, &model.id).await {
+        if let Ok(rules) = get_matching_rate_limits_for_user_and_groups(&user.username, &user.groups, &model.id).await {
             for rule in rules {
                 if let Ok(info) = calculate_usage_for_rule(&rule, &user.username, &model.id, now).await {
                     model_rate_limits.push(info);
