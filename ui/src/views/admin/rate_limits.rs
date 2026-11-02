@@ -140,108 +140,82 @@ pub fn AdminRateLimitsView(toasts: Signal<Vec<Toast>>) -> Element {
         let window_val = form_window.read().clone();
         let unit_val = form_unit.read().clone();
 
-        if is_new {
-            let u_list = form_users.read().clone();
-            let user_targets: Vec<Option<String>> = if u_list.is_empty() || u_list.iter().any(|u| u == "*" || u.trim().is_empty()) {
-                vec![None]
-            } else {
-                u_list.into_iter().filter(|u| !u.trim().is_empty()).map(Some).collect()
-            };
-
-            let m_list = form_models.read().clone();
-            let model_targets: Vec<Option<String>> = if m_list.is_empty() || m_list.iter().any(|m| m == "*" || m.trim().is_empty()) {
-                vec![None]
-            } else {
-                m_list.into_iter().filter(|m| !m.trim().is_empty()).map(Some).collect()
-            };
-
-            spawn(async move {
-                let mut created_count = 0;
-                let mut err_msg = None;
-                for u in user_targets {
-                    for m in model_targets.clone() {
-                        let record = RateLimitRecord {
-                            id: String::new(),
-                            user: u.clone(),
-                            model: m.clone(),
-                            time_window: window_val.clone(),
-                            limit_value: parsed_limit,
-                            unit: unit_val.clone(),
-                            created_at: 0,
-                        };
-                        match save_admin_rate_limit(&record, true).await {
-                            Ok(_) => created_count += 1,
-                            Err(e) => err_msg = Some(e),
-                        }
+        let u_list = form_users.read().clone();
+        let user_val: Option<String> = if u_list.is_empty() || u_list.iter().any(|u| u == "*" || u.trim().is_empty()) {
+            None
+        } else {
+            let mut seen = std::collections::HashSet::new();
+            let mut deduped = Vec::new();
+            for u in u_list {
+                for part in u.split(',') {
+                    let trimmed = part.trim();
+                    if !trimmed.is_empty() && trimmed != "*" && seen.insert(trimmed.to_string()) {
+                        deduped.push(trimmed.to_string());
                     }
                 }
+            }
+            if deduped.is_empty() {
+                None
+            } else {
+                Some(deduped.join(", "))
+            }
+        };
 
-                if let Some(err) = err_msg {
+        let m_list = form_models.read().clone();
+        let model_val: Option<String> = if m_list.is_empty() || m_list.iter().any(|m| m == "*" || m.trim().is_empty()) {
+            None
+        } else {
+            let mut seen = std::collections::HashSet::new();
+            let mut deduped = Vec::new();
+            for m in m_list {
+                for part in m.split(',') {
+                    let trimmed = part.trim();
+                    if !trimmed.is_empty() && trimmed != "*" && seen.insert(trimmed.to_string()) {
+                        deduped.push(trimmed.to_string());
+                    }
+                }
+            }
+            if deduped.is_empty() {
+                None
+            } else {
+                Some(deduped.join(", "))
+            }
+        };
+
+        let record = RateLimitRecord {
+            id: if is_new { String::new() } else { current.id },
+            user: user_val,
+            model: model_val,
+            time_window: window_val,
+            limit_value: parsed_limit,
+            unit: unit_val,
+            created_at: if is_new { 0 } else { current.created_at },
+        };
+
+        spawn(async move {
+            match save_admin_rate_limit(&record, is_new).await {
+                Ok(_) => {
                     toasts.write().push(Toast {
                         id: js_sys::Date::now() as u64,
-                        message: format!("Saved {created_count} rate limit(s), but encountered error: {err}"),
-                        is_error: true,
-                    });
-                } else {
-                    toasts.write().push(Toast {
-                        id: js_sys::Date::now() as u64,
-                        message: if created_count == 1 {
-                            "Rate limit saved successfully.".to_string()
+                        message: if is_new {
+                            "Rate limit created successfully.".to_string()
                         } else {
-                            format!("{created_count} rate limit policies created successfully.")
+                            "Rate limit updated successfully.".to_string()
                         },
                         is_error: false,
                     });
+                    editing_rule.set(None);
+                    load_rate_limits_action(is_loading, rules, usages, users_list, models_list, toasts);
                 }
-                editing_rule.set(None);
-                load_rate_limits_action(is_loading, rules, usages, users_list, models_list, toasts);
-            });
-        } else {
-            let u_str = form_users.read().first().cloned().unwrap_or_default();
-            let user_val = if u_str.is_empty() || u_str == "*" {
-                None
-            } else {
-                Some(u_str)
-            };
-
-            let m_str = form_models.read().first().cloned().unwrap_or_default();
-            let model_val = if m_str.is_empty() || m_str == "*" {
-                None
-            } else {
-                Some(m_str)
-            };
-
-            let record = RateLimitRecord {
-                id: current.id,
-                user: user_val,
-                model: model_val,
-                time_window: window_val,
-                limit_value: parsed_limit,
-                unit: unit_val,
-                created_at: current.created_at,
-            };
-
-            spawn(async move {
-                match save_admin_rate_limit(&record, false).await {
-                    Ok(_) => {
-                        toasts.write().push(Toast {
-                            id: js_sys::Date::now() as u64,
-                            message: "Rate limit updated successfully.".to_string(),
-                            is_error: false,
-                        });
-                        editing_rule.set(None);
-                        load_rate_limits_action(is_loading, rules, usages, users_list, models_list, toasts);
-                    }
-                    Err(err) => {
-                        toasts.write().push(Toast {
-                            id: js_sys::Date::now() as u64,
-                            message: err,
-                            is_error: true,
-                        });
-                    }
+                Err(err) => {
+                    toasts.write().push(Toast {
+                        id: js_sys::Date::now() as u64,
+                        message: err,
+                        is_error: true,
+                    });
                 }
-            });
-        }
+            }
+        });
     };
 
     let on_delete_rule = move |id: String| {
@@ -275,6 +249,7 @@ pub fn AdminRateLimitsView(toasts: Signal<Vec<Toast>>) -> Element {
     let unique_users_limited = current_rules
         .iter()
         .filter_map(|r| r.user.as_ref())
+        .flat_map(|u| u.split(',').map(str::trim).filter(|s| !s.is_empty()))
         .collect::<std::collections::HashSet<_>>()
         .len();
 
@@ -286,12 +261,10 @@ pub fn AdminRateLimitsView(toasts: Signal<Vec<Toast>>) -> Element {
 
             let user_matches = if u_filter.is_empty() {
                 true
+            } else if let Some(ref u) = r.user {
+                u.split(',').any(|part| part.trim().to_lowercase().contains(&u_filter))
             } else {
-                r.user
-                    .as_deref()
-                    .unwrap_or("global")
-                    .to_lowercase()
-                    .contains(&u_filter)
+                "global".contains(&u_filter) || u_filter == "*"
             };
 
             let window_matches = if w_filter.is_empty() {
@@ -454,14 +427,24 @@ pub fn AdminRateLimitsView(toasts: Signal<Vec<Toast>>) -> Element {
                                             key: "{rule.id}",
                                             td {
                                                 if let Some(ref u) = rule.user {
-                                                    span { class: "font-mono font-bold text-sm", "{u}" }
+                                                    div {
+                                                        class: "flex flex-wrap gap-1 items-center",
+                                                        for user_chip in u.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                                                            GlassBadge { variant: "primary", "{user_chip}" }
+                                                        }
+                                                    }
                                                 } else {
                                                     GlassBadge { variant: "glow", "* Global (All Users)" }
                                                 }
                                             }
                                             td {
                                                 if let Some(ref m) = rule.model {
-                                                    span { class: "font-mono text-xs", "{m}" }
+                                                    div {
+                                                        class: "flex flex-wrap gap-1 items-center",
+                                                        for model_chip in m.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                                                            GlassBadge { variant: "secondary", "{model_chip}" }
+                                                        }
+                                                    }
                                                 } else {
                                                     GlassBadge { variant: "secondary", "* All Models" }
                                                 }
@@ -512,8 +495,18 @@ pub fn AdminRateLimitsView(toasts: Signal<Vec<Toast>>) -> Element {
                                                         onclick: {
                                                             let r = rule.clone();
                                                             move |_| {
-                                                                form_users.set(r.user.as_ref().map(|u| vec![u.clone()]).unwrap_or_default());
-                                                                form_models.set(r.model.as_ref().map(|m| vec![m.clone()]).unwrap_or_default());
+                                                                form_users.set(
+                                                                    r.user
+                                                                        .as_deref()
+                                                                        .map(|u| u.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect())
+                                                                        .unwrap_or_default(),
+                                                                );
+                                                                form_models.set(
+                                                                    r.model
+                                                                        .as_deref()
+                                                                        .map(|m| m.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect())
+                                                                        .unwrap_or_default(),
+                                                                );
                                                                 form_window.set(r.time_window.clone());
                                                                 form_unit.set(r.unit.clone());
                                                                 form_limit_str.set(r.limit_value.to_string());
