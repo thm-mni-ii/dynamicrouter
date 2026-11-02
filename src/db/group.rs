@@ -78,8 +78,12 @@ pub struct UpdateGroupPayload {
 
 #[derive(sqlx::FromRow, Debug, Clone, Serialize, Deserialize)]
 pub struct GroupMember {
+    pub id: String,
     pub group_id: String,
     pub username: String,
+    pub is_manual: bool,
+    pub joined_at: i64,
+    pub left_at: Option<i64>,
     pub created_at: i64,
 }
 
@@ -240,7 +244,7 @@ pub async fn get_groups_summary() -> Result<Vec<GroupSummary>, anyhow::Error> {
             g.description,
             g.limit_to_models,
             g.created_at,
-            (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS member_count,
+            (SELECT COUNT(DISTINCT username) FROM group_members gm WHERE gm.group_id = g.id AND gm.left_at IS NULL) AS member_count,
             (SELECT COUNT(*) FROM group_oidc_rules gor WHERE gor.group_id = g.id) AS rule_count,
             (SELECT COUNT(*) FROM rate_limits rl WHERE rl.group_name = g.name) AS rate_limit_count
         FROM groups g
@@ -273,9 +277,9 @@ pub async fn get_groups_summary() -> Result<Vec<GroupSummary>, anyhow::Error> {
 pub async fn get_group_members(group_id: &str) -> Result<Vec<String>, anyhow::Error> {
     let rows = sqlx::query_scalar::<_, String>(
         r"
-        SELECT username
+        SELECT DISTINCT username
         FROM group_members
-        WHERE group_id = ?
+        WHERE group_id = ? AND left_at IS NULL
         ORDER BY username ASC
         ",
     )
@@ -288,14 +292,43 @@ pub async fn get_group_members(group_id: &str) -> Result<Vec<String>, anyhow::Er
 
 pub async fn add_group_member(group_id: &str, username: &str) -> Result<(), anyhow::Error> {
     let now = Utc::now().timestamp();
-    sqlx::query(
+    let uname = username.trim();
+
+    // Check if user is already an active member of this group
+    let active = sqlx::query_as::<_, (String, bool)>(
         r"
-        INSERT OR IGNORE INTO group_members (group_id, username, created_at)
-        VALUES (?, ?, ?)
+        SELECT id, is_manual
+        FROM group_members
+        WHERE group_id = ? AND username = ? AND left_at IS NULL
+        LIMIT 1
         ",
     )
     .bind(group_id)
-    .bind(username.trim())
+    .bind(uname)
+    .fetch_optional(get_executor())
+    .await?;
+
+    if let Some((id, is_manual)) = active {
+        if !is_manual {
+            sqlx::query("UPDATE group_members SET is_manual = 1 WHERE id = ?")
+                .bind(id)
+                .execute(get_executor())
+                .await?;
+        }
+        return Ok(());
+    }
+
+    let id = Uuid::new_v4().to_string();
+    sqlx::query(
+        r"
+        INSERT INTO group_members (id, group_id, username, is_manual, joined_at, left_at, created_at)
+        VALUES (?, ?, ?, 1, ?, NULL, ?)
+        ",
+    )
+    .bind(&id)
+    .bind(group_id)
+    .bind(uname)
+    .bind(now)
     .bind(now)
     .execute(get_executor())
     .await?;
@@ -304,12 +337,15 @@ pub async fn add_group_member(group_id: &str, username: &str) -> Result<(), anyh
 }
 
 pub async fn remove_group_member(group_id: &str, username: &str) -> Result<bool, anyhow::Error> {
+    let now = Utc::now().timestamp();
     let res = sqlx::query(
         r"
-        DELETE FROM group_members
-        WHERE group_id = ? AND username = ?
+        UPDATE group_members
+        SET left_at = ?
+        WHERE group_id = ? AND username = ? AND left_at IS NULL
         ",
     )
+    .bind(now)
     .bind(group_id)
     .bind(username.trim())
     .execute(get_executor())
@@ -321,10 +357,27 @@ pub async fn remove_group_member(group_id: &str, username: &str) -> Result<bool,
 pub async fn get_user_manual_groups(username: &str) -> Result<Vec<String>, anyhow::Error> {
     let rows = sqlx::query_scalar::<_, String>(
         r"
-        SELECT g.name
+        SELECT DISTINCT g.name
         FROM groups g
         JOIN group_members gm ON g.id = gm.group_id
-        WHERE gm.username = ?
+        WHERE gm.username = ? AND gm.is_manual = 1 AND gm.left_at IS NULL
+        ORDER BY g.name ASC
+        ",
+    )
+    .bind(username.trim())
+    .fetch_all(get_executor())
+    .await?;
+
+    Ok(rows)
+}
+
+pub async fn get_user_groups(username: &str) -> Result<Vec<String>, anyhow::Error> {
+    let rows = sqlx::query_scalar::<_, String>(
+        r"
+        SELECT DISTINCT g.name
+        FROM groups g
+        JOIN group_members gm ON g.id = gm.group_id
+        WHERE gm.username = ? AND gm.left_at IS NULL
         ORDER BY g.name ASC
         ",
     )
@@ -340,10 +393,11 @@ pub async fn get_all_group_members_for_group_name(
 ) -> Result<Vec<String>, anyhow::Error> {
     let rows = sqlx::query_scalar::<_, String>(
         r"
-        SELECT gm.username
+        SELECT DISTINCT gm.username
         FROM group_members gm
         JOIN groups g ON gm.group_id = g.id
-        WHERE g.name = ?
+        WHERE g.name = ? AND gm.left_at IS NULL
+        ORDER BY gm.username ASC
         ",
     )
     .bind(group_name.trim())
@@ -351,6 +405,69 @@ pub async fn get_all_group_members_for_group_name(
     .await?;
 
     Ok(rows)
+}
+
+pub async fn sync_user_oidc_groups(
+    username: &str,
+    matched_group_names: &HashSet<String>,
+) -> Result<(), anyhow::Error> {
+    let now = Utc::now().timestamp();
+    let uname = username.trim();
+
+    #[derive(sqlx::FromRow)]
+    struct ActiveMembership {
+        id: String,
+        group_name: String,
+        is_manual: bool,
+    }
+
+    let active_rows = sqlx::query_as::<_, ActiveMembership>(
+        r"
+        SELECT gm.id, g.name AS group_name, gm.is_manual
+        FROM group_members gm
+        JOIN groups g ON gm.group_id = g.id
+        WHERE gm.username = ? AND gm.left_at IS NULL
+        ",
+    )
+    .bind(uname)
+    .fetch_all(get_executor())
+    .await?;
+
+    // Mark memberships as left if dynamic and no longer matched
+    for active in &active_rows {
+        if !active.is_manual && !matched_group_names.contains(&active.group_name) {
+            sqlx::query("UPDATE group_members SET left_at = ? WHERE id = ?")
+                .bind(now)
+                .bind(&active.id)
+                .execute(get_executor())
+                .await?;
+        }
+    }
+
+    // Add new dynamic memberships
+    for gname in matched_group_names {
+        let is_already_active = active_rows.iter().any(|a| a.group_name == *gname);
+        if !is_already_active {
+            if let Some(group) = get_group_by_name(gname).await? {
+                let id = Uuid::new_v4().to_string();
+                sqlx::query(
+                    r"
+                    INSERT INTO group_members (id, group_id, username, is_manual, joined_at, left_at, created_at)
+                    VALUES (?, ?, ?, 0, ?, NULL, ?)
+                    ",
+                )
+                .bind(&id)
+                .bind(&group.id)
+                .bind(uname)
+                .bind(now)
+                .bind(now)
+                .execute(get_executor())
+                .await?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 pub async fn get_group_oidc_rules(group_id: &str) -> Result<Vec<GroupOidcRule>, anyhow::Error> {
@@ -461,7 +578,8 @@ pub struct ActiveGroupOidcRuleRow {
     pub created_at: i64,
 }
 
-pub async fn get_all_active_group_oidc_rules() -> Result<Vec<ActiveGroupOidcRuleRow>, anyhow::Error> {
+pub async fn get_all_active_group_oidc_rules() -> Result<Vec<ActiveGroupOidcRuleRow>, anyhow::Error>
+{
     let rows = sqlx::query_as::<_, ActiveGroupOidcRuleRow>(
         r"
         SELECT gor.id, gor.group_id, g.name AS group_name, gor.name, gor.cel_expression, gor.created_at
@@ -486,7 +604,10 @@ pub async fn get_allowed_models_for_groups(
     let mut allowed_models = HashSet::new();
     let all_groups = get_all_groups().await?;
     for group in all_groups {
-        if group_names.iter().any(|gn| gn.eq_ignore_ascii_case(&group.name)) {
+        if group_names
+            .iter()
+            .any(|gn| gn.eq_ignore_ascii_case(&group.name))
+        {
             if let Some(ref models) = group.limit_to_models {
                 allowed_models.extend(models.clone());
             }

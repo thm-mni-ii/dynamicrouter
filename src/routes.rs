@@ -3,8 +3,8 @@ use crate::db::alias::resolve_alias;
 use crate::db::model::{get_exact_model_config, get_model_config};
 use crate::db::openai_api::get_all_openai_apis;
 use crate::db::user::{
-    User, UserToken, get_user_and_token_by_token_hash, get_user_by_token_hash,
-    hash_token, normalize_token_secret,
+    User, UserToken, get_user_and_token_by_token_hash, get_user_by_token_hash, hash_token,
+    normalize_token_secret,
 };
 use crate::handlers::{GenerationType, Handler, get_handler};
 use crate::utils::ModelRef;
@@ -16,17 +16,11 @@ use axum::response::{IntoResponse, Response};
 use log::{debug, error, warn};
 use serde_json::{Value, json};
 
-pub async fn completions(
-    authorization: Authorization,
-    body: Json<Value>,
-) -> Response {
+pub async fn completions(authorization: Authorization, body: Json<Value>) -> Response {
     generate(GenerationType::Completions, authorization, body).await
 }
 
-pub async fn embeddings(
-    authorization: Authorization,
-    body: Json<Value>,
-) -> Response {
+pub async fn embeddings(authorization: Authorization, body: Json<Value>) -> Response {
     generate(GenerationType::Embeddings, authorization, body).await
 }
 
@@ -38,12 +32,16 @@ pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusC
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let group_allowed_models = crate::db::group::get_allowed_models_for_groups(&authorization.groups)
-        .await
-        .unwrap_or_default();
+    let group_allowed_models =
+        crate::db::group::get_allowed_models_for_groups(&authorization.groups)
+            .await
+            .unwrap_or_default();
 
     for model in db_models {
-        if model.id == "*" || crate::utils::is_glob_pattern(&model.id) || model.hidden.unwrap_or(false) {
+        if model.id == "*"
+            || crate::utils::is_glob_pattern(&model.id)
+            || model.hidden.unwrap_or(false)
+        {
             continue;
         }
         if let Some(users) = &model.limit_to_users
@@ -60,7 +58,10 @@ pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusC
             continue;
         }
         // Token model restrictions
-        if let Some(token_limit_to) = authorization.token.as_ref().and_then(|t| t.limit_to_models.as_ref())
+        if let Some(token_limit_to) = authorization
+            .token
+            .as_ref()
+            .and_then(|t| t.limit_to_models.as_ref())
             && !crate::utils::is_model_allowed(token_limit_to, &model.id)
         {
             continue;
@@ -100,7 +101,10 @@ pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusC
                     continue;
                 }
 
-                if let Some(token_limit_to) = authorization.token.as_ref().and_then(|t| t.limit_to_models.as_ref())
+                if let Some(token_limit_to) = authorization
+                    .token
+                    .as_ref()
+                    .and_then(|t| t.limit_to_models.as_ref())
                     && !crate::utils::is_model_allowed(token_limit_to, &full_id)
                     && !crate::utils::is_model_allowed(token_limit_to, m)
                 {
@@ -145,10 +149,10 @@ pub async fn check_token_auth_with_ip(
                 .is_some_and(|e| crate::config::CONFIG.is_user_admin_by_config(e));
 
         let mut groups: Vec<String> = session.groups.into_iter().collect();
-        if let Ok(manual) = crate::db::group::get_user_manual_groups(&session.username).await {
-            for mg in manual {
-                if !groups.contains(&mg) {
-                    groups.push(mg);
+        if let Ok(user_groups) = crate::db::group::get_user_groups(&session.username).await {
+            for ug in user_groups {
+                if !groups.contains(&ug) {
+                    groups.push(ug);
                 }
             }
         }
@@ -186,7 +190,10 @@ pub async fn check_token_auth_with_ip(
         }
         if user_token.is_expired() {
             return TokenAuthResult::TokenExpired(
-                user_token.name.clone().unwrap_or_else(|| user_token.preview_display()),
+                user_token
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| user_token.preview_display()),
             );
         }
         if !user_token.is_ip_allowed(client_ip) {
@@ -195,10 +202,11 @@ pub async fn check_token_auth_with_ip(
                 client_ip
             ));
         }
-        let groups = crate::db::group::get_user_manual_groups(&user.username)
+        let groups = crate::db::group::get_user_groups(&user.username)
             .await
             .unwrap_or_default();
-        user.is_admin = user.is_admin || crate::config::CONFIG.is_user_admin_by_config(&user.username);
+        user.is_admin =
+            user.is_admin || crate::config::CONFIG.is_user_admin_by_config(&user.username);
         return TokenAuthResult::Valid {
             user,
             token: Some(user_token),
@@ -214,7 +222,10 @@ pub async fn check_token_auth_with_ip(
         }
         if user_token.is_expired() {
             return TokenAuthResult::TokenExpired(
-                user_token.name.clone().unwrap_or_else(|| user_token.preview_display()),
+                user_token
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| user_token.preview_display()),
             );
         }
         if !user_token.is_ip_allowed(client_ip) {
@@ -223,10 +234,11 @@ pub async fn check_token_auth_with_ip(
                 client_ip
             ));
         }
-        let groups = crate::db::group::get_user_manual_groups(&user.username)
+        let groups = crate::db::group::get_user_groups(&user.username)
             .await
             .unwrap_or_default();
-        user.is_admin = user.is_admin || crate::config::CONFIG.is_user_admin_by_config(&user.username);
+        user.is_admin =
+            user.is_admin || crate::config::CONFIG.is_user_admin_by_config(&user.username);
         return TokenAuthResult::Valid {
             user,
             token: Some(user_token),
@@ -238,10 +250,11 @@ pub async fn check_token_auth_with_ip(
         if user.is_expired() {
             return TokenAuthResult::UserExpired(user.username);
         }
-        let groups = crate::db::group::get_user_manual_groups(&user.username)
+        let groups = crate::db::group::get_user_groups(&user.username)
             .await
             .unwrap_or_default();
-        user.is_admin = user.is_admin || crate::config::CONFIG.is_user_admin_by_config(&user.username);
+        user.is_admin =
+            user.is_admin || crate::config::CONFIG.is_user_admin_by_config(&user.username);
         return TokenAuthResult::Valid {
             user,
             token: None,
@@ -285,12 +298,9 @@ impl IntoResponse for AuthRejection {
                 "invalid_api_key",
                 "invalid_request_error",
             ),
-            AuthRejection::Forbidden(m) => (
-                StatusCode::FORBIDDEN,
-                m,
-                "user_expired",
-                "access_denied",
-            ),
+            AuthRejection::Forbidden(m) => {
+                (StatusCode::FORBIDDEN, m, "user_expired", "access_denied")
+            }
         };
 
         let body = json!({
@@ -302,7 +312,12 @@ impl IntoResponse for AuthRejection {
             "message": msg
         });
 
-        (status, [(header::CONTENT_TYPE, "application/json")], Json(body)).into_response()
+        (
+            status,
+            [(header::CONTENT_TYPE, "application/json")],
+            Json(body),
+        )
+            .into_response()
     }
 }
 
@@ -315,12 +330,18 @@ impl<S: Send + Sync> FromRequestParts<S> for Authorization {
             .get(header::AUTHORIZATION)
             .and_then(|h| h.to_str().ok())
             .and_then(|h| h.strip_prefix("Bearer "))
-            .ok_or_else(|| AuthRejection::Unauthorized("Missing or invalid authorization header".to_string()))?;
+            .ok_or_else(|| {
+                AuthRejection::Unauthorized("Missing or invalid authorization header".to_string())
+            })?;
 
         let client_ip = extract_client_ip(parts);
 
         match check_token_auth_with_ip(token, client_ip).await {
-            TokenAuthResult::Valid { user, token: tok, groups } => {
+            TokenAuthResult::Valid {
+                user,
+                token: tok,
+                groups,
+            } => {
                 let username = user.username.clone();
                 Ok(Authorization {
                     username,
@@ -329,22 +350,16 @@ impl<S: Send + Sync> FromRequestParts<S> for Authorization {
                     groups,
                 })
             }
-            TokenAuthResult::UserExpired(username) => {
-                Err(AuthRejection::Forbidden(format!(
-                    "User account '{username}' has expired"
-                )))
-            }
-            TokenAuthResult::TokenExpired(ident) => {
-                Err(AuthRejection::Forbidden(format!(
-                    "API token '{ident}' has expired"
-                )))
-            }
-            TokenAuthResult::IpForbidden(msg) => {
-                Err(AuthRejection::Forbidden(msg))
-            }
-            TokenAuthResult::Invalid => {
-                Err(AuthRejection::Unauthorized("Invalid authorization token".to_string()))
-            }
+            TokenAuthResult::UserExpired(username) => Err(AuthRejection::Forbidden(format!(
+                "User account '{username}' has expired"
+            ))),
+            TokenAuthResult::TokenExpired(ident) => Err(AuthRejection::Forbidden(format!(
+                "API token '{ident}' has expired"
+            ))),
+            TokenAuthResult::IpForbidden(msg) => Err(AuthRejection::Forbidden(msg)),
+            TokenAuthResult::Invalid => Err(AuthRejection::Unauthorized(
+                "Invalid authorization token".to_string(),
+            )),
         }
     }
 }
@@ -398,9 +413,10 @@ async fn extract_models(
             get_model_config(&model_str).await.unwrap_or(None)
         };
 
-        let group_allowed_models = crate::db::group::get_allowed_models_for_groups(&authorization.groups)
-            .await
-            .unwrap_or_default();
+        let group_allowed_models =
+            crate::db::group::get_allowed_models_for_groups(&authorization.groups)
+                .await
+                .unwrap_or_default();
 
         // 1. Check user model limits (additive union with group permissions)
         let user_allowed = authorization
@@ -428,15 +444,14 @@ async fn extract_models(
         }
 
         if let Some(ref conf) = model_conf {
-            if !conf
-                .limit_to_users
-                .as_ref()
-                .is_none_or(|limited| {
-                    crate::utils::is_user_allowed(limited, &authorization.username)
-                        || crate::utils::is_any_group_allowed(limited, &authorization.groups)
-                })
-            {
-                warn!("{} is not in allowed users or groups for {model}", authorization.username);
+            if !conf.limit_to_users.as_ref().is_none_or(|limited| {
+                crate::utils::is_user_allowed(limited, &authorization.username)
+                    || crate::utils::is_any_group_allowed(limited, &authorization.groups)
+            }) {
+                warn!(
+                    "{} is not in allowed users or groups for {model}",
+                    authorization.username
+                );
                 return Err(StatusCode::FORBIDDEN);
             }
         } else if !matches_openai {
@@ -486,7 +501,10 @@ async fn generate(
 
         // 2. Evaluate Token-level rate limits across models
         if let Some(ref tok) = authorization.token {
-            let token_ident = tok.name.as_deref().unwrap_or(tok.token_prefix.as_deref().unwrap_or("token"));
+            let token_ident = tok
+                .name
+                .as_deref()
+                .unwrap_or(tok.token_prefix.as_deref().unwrap_or("token"));
             match crate::rate_limit::check_token_rate_limits(
                 &tok.token_hash,
                 token_ident,

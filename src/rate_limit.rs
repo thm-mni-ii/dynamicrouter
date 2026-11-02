@@ -1,10 +1,9 @@
 use crate::db::rate_limit::{
-    calculate_usage_for_rule,
-    get_matching_rate_limits_for_user_and_groups, get_matching_token_rate_limits,
-    normalize_unit, window_duration_seconds,
+    calculate_usage_for_rule, get_matching_rate_limits_for_user_and_groups,
+    get_matching_token_rate_limits, normalize_unit, window_duration_seconds,
 };
 use axum::body::Body;
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 use log::warn;
@@ -99,7 +98,9 @@ impl IntoResponse for RateLimitRejection {
         });
 
         builder
-            .body(Body::from(serde_json::to_vec(&body_json).unwrap_or_default()))
+            .body(Body::from(
+                serde_json::to_vec(&body_json).unwrap_or_default(),
+            ))
             .unwrap()
     }
 }
@@ -110,13 +111,14 @@ pub async fn check_rate_limits_for_user_and_groups(
     model_name: &str,
     prompt_tokens: i64,
 ) -> Result<Vec<(String, String)>, RateLimitRejection> {
-    let rules = match get_matching_rate_limits_for_user_and_groups(username, groups, model_name).await {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("Failed to query rate limit rules for {username}: {e}");
-            return Ok(Vec::new());
-        }
-    };
+    let rules =
+        match get_matching_rate_limits_for_user_and_groups(username, groups, model_name).await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("Failed to query rate limit rules for {username}: {e}");
+                return Ok(Vec::new());
+            }
+        };
 
     if rules.is_empty() {
         return Ok(Vec::new());
@@ -154,7 +156,10 @@ pub async fn check_rate_limits_for_user_and_groups(
             let reset_ts = usage.reset_timestamp.unwrap_or(now + reset_secs);
 
             let mut headers = vec![
-                ("X-RateLimit-Limit".to_string(), rule.limit_value.to_string()),
+                (
+                    "X-RateLimit-Limit".to_string(),
+                    rule.limit_value.to_string(),
+                ),
                 ("X-RateLimit-Remaining".to_string(), "0".to_string()),
                 ("X-RateLimit-Reset".to_string(), reset_ts.to_string()),
                 (
@@ -269,7 +274,7 @@ pub async fn check_rate_limits(
     model_name: &str,
     prompt_tokens: i64,
 ) -> Result<Vec<(String, String)>, RateLimitRejection> {
-    let groups = crate::db::group::get_user_manual_groups(username)
+    let groups = crate::db::group::get_user_groups(username)
         .await
         .unwrap_or_default();
     check_rate_limits_for_user_and_groups(username, &groups, model_name, prompt_tokens).await
@@ -325,7 +330,10 @@ pub async fn check_token_rate_limits(
             let reset_ts = usage.reset_timestamp.unwrap_or(now + reset_secs);
 
             let mut headers = vec![
-                ("X-RateLimit-Limit".to_string(), rule.limit_value.to_string()),
+                (
+                    "X-RateLimit-Limit".to_string(),
+                    rule.limit_value.to_string(),
+                ),
                 ("X-RateLimit-Remaining".to_string(), "0".to_string()),
                 ("X-RateLimit-Reset".to_string(), reset_ts.to_string()),
                 (

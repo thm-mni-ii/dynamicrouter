@@ -1,14 +1,17 @@
 use crate::auth::extractor::AuthUser;
 use crate::auth::oidc::{
-    decode_jwt_payload_unverified, extract_claims_from_json, generate_pkce_pair,
-    generate_random_token, OidcClient,
+    OidcClient, decode_jwt_payload_unverified, extract_claims_from_json, generate_pkce_pair,
+    generate_random_token,
 };
 use crate::auth::session::SESSIONS;
 use crate::config::CONFIG;
 use crate::db::user::{create_user, get_user_by_username};
 use crate::ui::CSP_VALUE;
 use axum::extract::Query;
-use axum::http::header::{HeaderMap, HeaderValue, CONTENT_SECURITY_POLICY, CONTENT_TYPE, SET_COOKIE, X_CONTENT_TYPE_OPTIONS, X_FRAME_OPTIONS, REFERRER_POLICY};
+use axum::http::header::{
+    CONTENT_SECURITY_POLICY, CONTENT_TYPE, HeaderMap, HeaderValue, REFERRER_POLICY, SET_COOKIE,
+    X_CONTENT_TYPE_OPTIONS, X_FRAME_OPTIONS,
+};
 use axum::http::{StatusCode, Uri};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -95,11 +98,12 @@ async fn auth_login(
                 .get("host")
                 .and_then(|h| h.to_str().ok())
                 .unwrap_or("localhost:3000");
-            let scheme = if uri.scheme_str() == Some("https") || headers.contains_key("x-forwarded-proto") {
-                "https"
-            } else {
-                "http"
-            };
+            let scheme =
+                if uri.scheme_str() == Some("https") || headers.contains_key("x-forwarded-proto") {
+                    "https"
+                } else {
+                    "http"
+                };
             format!("{scheme}://{host}/auth/callback")
         });
 
@@ -153,11 +157,17 @@ async fn auth_login(
 fn html_response(status: StatusCode, html: String) -> Response {
     let mut response = (status, Html(html)).into_response();
     let headers = response.headers_mut();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
+    headers.insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
     headers.insert(CONTENT_SECURITY_POLICY, HeaderValue::from_static(CSP_VALUE));
     headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     headers.insert(X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
-    headers.insert(REFERRER_POLICY, HeaderValue::from_static("strict-origin-when-cross-origin"));
+    headers.insert(
+        REFERRER_POLICY,
+        HeaderValue::from_static("strict-origin-when-cross-origin"),
+    );
     response
 }
 
@@ -168,7 +178,8 @@ fn render_callback_success_html(username: &str, is_admin: bool, session_token: &
         r#"<span class="badge badge-user">Standard User</span>"#
     };
 
-    format!(r#"<!DOCTYPE html>
+    format!(
+        r#"<!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
@@ -420,11 +431,13 @@ fn render_callback_success_html(username: &str, is_admin: bool, session_token: &
     }})();
   </script>
 </body>
-</html>"#)
+</html>"#
+    )
 }
 
 fn render_callback_error_html(error_message: &str) -> String {
-    format!(r#"<!DOCTYPE html>
+    format!(
+        r#"<!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
@@ -529,7 +542,8 @@ fn render_callback_error_html(error_message: &str) -> String {
     <a href="/" class="btn">Return to Home</a>
   </div>
 </body>
-</html>"#)
+</html>"#
+    )
 }
 
 #[allow(clippy::too_many_lines)]
@@ -542,7 +556,9 @@ async fn handle_callback(
         Some(p) => p,
         None => {
             if is_browser_get {
-                let html = render_callback_error_html("Invalid or expired state parameter. Please try logging in again.");
+                let html = render_callback_error_html(
+                    "Invalid or expired state parameter. Please try logging in again.",
+                );
                 return Ok(html_response(StatusCode::BAD_REQUEST, html));
             }
             return Err((
@@ -651,10 +667,18 @@ async fn handle_callback(
 
     // Check admin status against all potential identifier claims
     let config_admin = CONFIG.is_user_admin_by_config(&username)
-        || preferred_username.as_deref().is_some_and(|u| CONFIG.is_user_admin_by_config(u))
-        || email.as_deref().is_some_and(|e| CONFIG.is_user_admin_by_config(e))
-        || sub.as_deref().is_some_and(|s| CONFIG.is_user_admin_by_config(s))
-        || name.as_deref().is_some_and(|n| CONFIG.is_user_admin_by_config(n));
+        || preferred_username
+            .as_deref()
+            .is_some_and(|u| CONFIG.is_user_admin_by_config(u))
+        || email
+            .as_deref()
+            .is_some_and(|e| CONFIG.is_user_admin_by_config(e))
+        || sub
+            .as_deref()
+            .is_some_and(|s| CONFIG.is_user_admin_by_config(s))
+        || name
+            .as_deref()
+            .is_some_and(|n| CONFIG.is_user_admin_by_config(n));
 
     // Check admin status against roles (case-insensitively)
     let role_admin = roles.iter().any(|r| {
@@ -671,7 +695,9 @@ async fn handle_callback(
 
     // 1. Check auto-registration if user does not exist in DB
     if existing_db_user.is_none() && !CONFIG.oidc_auto_register {
-        warn!("User '{username}' attempted OIDC login but is not registered and auto-registration is disabled");
+        warn!(
+            "User '{username}' attempted OIDC login but is not registered and auto-registration is disabled"
+        );
         if is_browser_get {
             let html = render_callback_error_html(&format!(
                 "User registration is disabled and account '{username}' does not exist. Please contact an administrator."
@@ -680,7 +706,9 @@ async fn handle_callback(
         }
         return Err((
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": format!("User '{username}' is not registered and auto-registration is disabled") })),
+            Json(
+                json!({ "error": format!("User '{username}' is not registered and auto-registration is disabled") }),
+            ),
         ));
     }
 
@@ -710,7 +738,9 @@ async fn handle_callback(
     // Create or update user in database with full admin flag & preserved expires_at
     if let Err(e) = create_user(
         &username,
-        existing_db_user.as_ref().and_then(|u| u.limit_to_models.as_ref()),
+        existing_db_user
+            .as_ref()
+            .and_then(|u| u.limit_to_models.as_ref()),
         existing_db_user.as_ref().and_then(|u| u.log_request_body),
         is_admin,
         existing_db_user.as_ref().and_then(|u| u.expires_at),
@@ -732,27 +762,39 @@ async fn handle_callback(
     };
 
     let mut session_groups = std::collections::HashSet::new();
+    let mut matched_oidc_groups = std::collections::HashSet::new();
     if let Ok(active_rules) = crate::db::group::get_all_active_group_oidc_rules().await {
         for rule in active_rules {
             if let Ok(program) = crate::auth::cel::compile_cel(&rule.cel_expression) {
                 match crate::auth::cel::evaluate_cel(&program, &rule_ctx) {
                     Ok(true) => {
+                        matched_oidc_groups.insert(rule.group_name.clone());
                         session_groups.insert(rule.group_name);
                     }
                     Ok(false) => {}
                     Err(e) => {
-                        warn!("Error evaluating CEL rule '{}' ({}) for user '{}': {e}", rule.id, rule.cel_expression, username);
+                        warn!(
+                            "Error evaluating CEL rule '{}' ({}) for user '{}': {e}",
+                            rule.id, rule.cel_expression, username
+                        );
                     }
                 }
             } else {
-                warn!("Invalid compiled CEL expression for rule '{}': {}", rule.id, rule.cel_expression);
+                warn!(
+                    "Invalid compiled CEL expression for rule '{}': {}",
+                    rule.id, rule.cel_expression
+                );
             }
         }
     }
 
-    if let Ok(manual_groups) = crate::db::group::get_user_manual_groups(&username).await {
-        for mg in manual_groups {
-            session_groups.insert(mg);
+    if let Err(e) = crate::db::group::sync_user_oidc_groups(&username, &matched_oidc_groups).await {
+        warn!("Failed to persist OIDC groups for user '{username}': {e}");
+    }
+
+    if let Ok(active_user_groups) = crate::db::group::get_user_groups(&username).await {
+        for g in active_user_groups {
+            session_groups.insert(g);
         }
     }
 
@@ -769,7 +811,9 @@ async fn handle_callback(
         )
         .await;
 
-    info!("User '{username}' successfully authenticated via OIDC (is_admin: {is_admin}, groups: {session_groups:?})");
+    info!(
+        "User '{username}' successfully authenticated via OIDC (is_admin: {is_admin}, groups: {session_groups:?})"
+    );
 
     let cookie_header = format!(
         "session_token={session_token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={ttl_secs}"
@@ -825,7 +869,8 @@ async fn auth_callback_get(
     let state = match query.state {
         Some(s) => s,
         None => {
-            let html = render_callback_error_html("Missing state parameter from identity provider.");
+            let html =
+                render_callback_error_html("Missing state parameter from identity provider.");
             return Ok(html_response(StatusCode::BAD_REQUEST, html));
         }
     };

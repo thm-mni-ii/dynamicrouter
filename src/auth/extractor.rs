@@ -5,11 +5,11 @@ use crate::db::user::{
     User, get_user_and_token_by_token_hash, get_user_by_token_hash, get_user_by_username,
     hash_token, normalize_token_secret,
 };
+use axum::Json;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -86,11 +86,7 @@ pub fn extract_client_ip(parts: &Parts) -> Option<std::net::IpAddr> {
         }
     }
 
-    if let Some(real_ip) = parts
-        .headers
-        .get("x-real-ip")
-        .and_then(|h| h.to_str().ok())
-    {
+    if let Some(real_ip) = parts.headers.get("x-real-ip").and_then(|h| h.to_str().ok()) {
         let trimmed = real_ip.trim();
         if let Ok(ip) = trimmed.parse::<std::net::IpAddr>() {
             return Some(ip);
@@ -154,10 +150,7 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
 
         // 1. Check in active session store (OIDC PKCE login session)
         if let Some(session) = SESSIONS.get_session(&raw_token).await {
-            let db_user = get_user_by_username(&session.username)
-                .await
-                .ok()
-                .flatten();
+            let db_user = get_user_by_username(&session.username).await.ok().flatten();
 
             if db_user.as_ref().is_some_and(User::is_expired) {
                 return Err(AuthError::Forbidden(format!(
@@ -175,10 +168,10 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                     .is_some_and(|e| CONFIG.is_user_admin_by_config(e));
 
             let mut groups: Vec<String> = session.groups.into_iter().collect();
-            if let Ok(manual) = crate::db::group::get_user_manual_groups(&session.username).await {
-                for mg in manual {
-                    if !groups.contains(&mg) {
-                        groups.push(mg);
+            if let Ok(user_groups) = crate::db::group::get_user_groups(&session.username).await {
+                for ug in user_groups {
+                    if !groups.contains(&ug) {
+                        groups.push(ug);
                     }
                 }
             }
@@ -214,7 +207,7 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                     client_ip
                 )));
             }
-            let groups = crate::db::group::get_user_manual_groups(&user.username)
+            let groups = crate::db::group::get_user_groups(&user.username)
                 .await
                 .unwrap_or_default();
             // Token authentication does not allow any admin actions
@@ -248,7 +241,7 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                     client_ip
                 )));
             }
-            let groups = crate::db::group::get_user_manual_groups(&user.username)
+            let groups = crate::db::group::get_user_groups(&user.username)
                 .await
                 .unwrap_or_default();
             return Ok(AuthUser {
@@ -270,7 +263,7 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                     user.username
                 )));
             }
-            let groups = crate::db::group::get_user_manual_groups(&user.username)
+            let groups = crate::db::group::get_user_groups(&user.username)
                 .await
                 .unwrap_or_default();
             return Ok(AuthUser {
@@ -316,7 +309,7 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
                     .as_deref()
                     .is_some_and(|e| CONFIG.is_user_admin_by_config(e));
 
-            let groups = crate::db::group::get_user_manual_groups(&username)
+            let groups = crate::db::group::get_user_groups(&username)
                 .await
                 .unwrap_or_default();
 

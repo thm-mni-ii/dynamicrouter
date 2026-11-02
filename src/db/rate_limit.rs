@@ -104,7 +104,8 @@ pub fn matches_target_list(pattern_list: &str, candidate: &str) -> bool {
         if trimmed.is_empty() {
             continue;
         }
-        if trimmed == "*" || trimmed == cand_trim || crate::utils::matches_glob(trimmed, cand_trim) {
+        if trimmed == "*" || trimmed == cand_trim || crate::utils::matches_glob(trimmed, cand_trim)
+        {
             return true;
         }
     }
@@ -135,7 +136,9 @@ pub fn normalize_target_list(input: Option<&str>) -> Option<String> {
     }
 }
 
-pub async fn create_rate_limit(payload: &CreateRateLimitPayload) -> Result<RateLimitRule, anyhow::Error> {
+pub async fn create_rate_limit(
+    payload: &CreateRateLimitPayload,
+) -> Result<RateLimitRule, anyhow::Error> {
     let id = Uuid::new_v4().to_string();
     let time_window = normalize_time_window(&payload.time_window);
     let unit = normalize_unit(payload.unit.as_deref());
@@ -272,7 +275,11 @@ pub async fn get_all_rate_limits(
                     if rule.user.is_some() {
                         return false;
                     }
-                } else if !rule.user.as_deref().map_or(false, |pat| matches_target_list(pat, u)) {
+                } else if !rule
+                    .user
+                    .as_deref()
+                    .map_or(false, |pat| matches_target_list(pat, u))
+                {
                     return false;
                 }
             }
@@ -281,7 +288,11 @@ pub async fn get_all_rate_limits(
                     if rule.model.is_some() {
                         return false;
                     }
-                } else if !rule.model.as_deref().map_or(false, |pat| matches_target_list(pat, m)) {
+                } else if !rule
+                    .model
+                    .as_deref()
+                    .map_or(false, |pat| matches_target_list(pat, m))
+                {
                     return false;
                 }
             }
@@ -290,7 +301,11 @@ pub async fn get_all_rate_limits(
                     if rule.group_name.is_some() {
                         return false;
                     }
-                } else if !rule.group_name.as_deref().map_or(false, |pat| matches_target_list(pat, g)) {
+                } else if !rule
+                    .group_name
+                    .as_deref()
+                    .map_or(false, |pat| matches_target_list(pat, g))
+                {
                     return false;
                 }
             }
@@ -325,7 +340,8 @@ pub async fn get_matching_rate_limits_for_user_and_groups(
                 (Some(u), None) => matches_target_list(u, username),
                 (None, Some(g)) => groups.iter().any(|ug| matches_target_list(g, ug)),
                 (Some(u), Some(g)) => {
-                    matches_target_list(u, username) && groups.iter().any(|ug| matches_target_list(g, ug))
+                    matches_target_list(u, username)
+                        && groups.iter().any(|ug| matches_target_list(g, ug))
                 }
             };
             if !target_matches {
@@ -345,7 +361,7 @@ pub async fn get_matching_rate_limits(
     username: &str,
     model_name: &str,
 ) -> Result<Vec<RateLimitRule>, anyhow::Error> {
-    let groups = crate::db::group::get_user_manual_groups(username)
+    let groups = crate::db::group::get_user_groups(username)
         .await
         .unwrap_or_default();
     get_matching_rate_limits_for_user_and_groups(username, &groups, model_name).await
@@ -373,7 +389,8 @@ pub async fn get_rate_limits_for_user_and_groups(
             (Some(u), None) => matches_target_list(u, username),
             (None, Some(g)) => groups.iter().any(|ug| matches_target_list(g, ug)),
             (Some(u), Some(g)) => {
-                matches_target_list(u, username) && groups.iter().any(|ug| matches_target_list(g, ug))
+                matches_target_list(u, username)
+                    && groups.iter().any(|ug| matches_target_list(g, ug))
             }
         })
         .collect();
@@ -381,10 +398,8 @@ pub async fn get_rate_limits_for_user_and_groups(
     Ok(filtered)
 }
 
-pub async fn get_rate_limits_for_user(
-    username: &str,
-) -> Result<Vec<RateLimitRule>, anyhow::Error> {
-    let groups = crate::db::group::get_user_manual_groups(username)
+pub async fn get_rate_limits_for_user(username: &str) -> Result<Vec<RateLimitRule>, anyhow::Error> {
+    let groups = crate::db::group::get_user_groups(username)
         .await
         .unwrap_or_default();
     get_rate_limits_for_user_and_groups(username, &groups).await
@@ -415,9 +430,7 @@ pub async fn get_rate_limits_strictly_for_user(
     Ok(filtered)
 }
 
-pub async fn delete_rate_limits_for_user(
-    username: &str,
-) -> Result<(), anyhow::Error> {
+pub async fn delete_rate_limits_for_user(username: &str) -> Result<(), anyhow::Error> {
     let rules = sqlx::query_as::<_, RateLimitRule>(
         "SELECT id, user, token_hash, group_name, scope_mode, model, time_window, limit_value, unit, created_at FROM rate_limits WHERE token_hash IS NULL AND user IS NOT NULL",
     )
@@ -426,7 +439,11 @@ pub async fn delete_rate_limits_for_user(
 
     for rule in rules {
         if let Some(ref u) = rule.user {
-            let parts: Vec<&str> = u.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+            let parts: Vec<&str> = u
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .collect();
             if parts.contains(&username) {
                 let remaining: Vec<&str> = parts.into_iter().filter(|&p| p != username).collect();
                 if remaining.is_empty() {
@@ -494,9 +511,7 @@ pub async fn get_rate_limits_for_token(
     Ok(rules)
 }
 
-pub async fn delete_rate_limits_for_token(
-    token_hash: &str,
-) -> Result<(), anyhow::Error> {
+pub async fn delete_rate_limits_for_token(token_hash: &str) -> Result<(), anyhow::Error> {
     sqlx::query("DELETE FROM rate_limits WHERE token_hash = ?")
         .bind(token_hash)
         .execute(get_executor())
@@ -514,6 +529,14 @@ enum ModelFilter<'a> {
 enum UserOrTokenFilter<'a> {
     Token(&'a str),
     UserList(Vec<&'a str>),
+    GroupShared {
+        group_name: &'a str,
+        user_list: Option<Vec<&'a str>>,
+    },
+    GroupPerUser {
+        group_name: &'a str,
+        user: &'a str,
+    },
     Any,
 }
 
@@ -543,6 +566,91 @@ async fn query_request_scalar_i64(
                 string_binds.push(u.to_string());
             }
             where_parts.push(format!("({})", user_clauses.join(" OR ")));
+        }
+        UserOrTokenFilter::GroupPerUser { group_name, user } => {
+            where_parts.push("request.user = ?".to_string());
+            string_binds.push(user.to_string());
+
+            let mut g_clauses = Vec::new();
+            for part in group_name.split(',') {
+                let trimmed = part.trim();
+                if trimmed.is_empty() || trimmed == "*" {
+                    continue;
+                }
+                if crate::utils::is_glob_pattern(trimmed) {
+                    g_clauses.push("g.name GLOB ?".to_string());
+                } else {
+                    g_clauses.push("g.name = ?".to_string());
+                }
+                string_binds.push(trimmed.to_string());
+            }
+
+            let g_filter = if g_clauses.is_empty() {
+                "1=1".to_string()
+            } else {
+                format!("({})", g_clauses.join(" OR "))
+            };
+
+            where_parts.push(format!(
+                r"EXISTS (
+                    SELECT 1 FROM group_members gm
+                    JOIN groups g ON gm.group_id = g.id
+                    WHERE gm.username = request.user
+                      AND {g_filter}
+                      AND request.enqueue >= gm.joined_at
+                      AND (gm.left_at IS NULL OR request.enqueue <= gm.left_at)
+                )"
+            ));
+        }
+        UserOrTokenFilter::GroupShared {
+            group_name,
+            user_list,
+        } => {
+            if let Some(users) = user_list {
+                if !users.is_empty() {
+                    let mut user_clauses = Vec::new();
+                    for u in users {
+                        if crate::utils::is_glob_pattern(u) {
+                            user_clauses.push("request.user GLOB ?".to_string());
+                        } else {
+                            user_clauses.push("request.user = ?".to_string());
+                        }
+                        string_binds.push(u.to_string());
+                    }
+                    where_parts.push(format!("({})", user_clauses.join(" OR ")));
+                }
+            }
+
+            let mut g_clauses = Vec::new();
+            for part in group_name.split(',') {
+                let trimmed = part.trim();
+                if trimmed.is_empty() || trimmed == "*" {
+                    continue;
+                }
+                if crate::utils::is_glob_pattern(trimmed) {
+                    g_clauses.push("g.name GLOB ?".to_string());
+                } else {
+                    g_clauses.push("g.name = ?".to_string());
+                }
+                string_binds.push(trimmed.to_string());
+            }
+
+            let g_filter = if g_clauses.is_empty() {
+                "1=1".to_string()
+            } else {
+                format!("({})", g_clauses.join(" OR "))
+            };
+
+            where_parts.push(format!(
+                r"EXISTS (
+                    SELECT 1 FROM group_members gm
+                    JOIN groups g ON gm.group_id = g.id
+                    WHERE gm.username = request.user
+                      AND {g_filter}
+                      AND request.enqueue >= gm.joined_at
+                      AND (gm.left_at IS NULL OR request.enqueue <= gm.left_at)
+                )"
+            ));
         }
         _ => {}
     }
@@ -575,7 +683,12 @@ async fn query_request_scalar_i64(
     for s in string_binds {
         query = query.bind(s);
     }
-    query.bind(start_time).fetch_optional(pool).await.ok().flatten()
+    query
+        .bind(start_time)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
 }
 
 pub async fn calculate_usage_for_rule(
@@ -608,26 +721,25 @@ pub async fn calculate_usage_for_rule(
         _ => ModelFilter::Any,
     };
 
-    let shared_group_members: Vec<String>;
     let target_filter = if let Some(ref th) = rule.token_hash {
         UserOrTokenFilter::Token(th.trim())
     } else if let Some(ref gname) = rule.group_name {
         if rule.scope_mode == "shared_group" {
-            let mut members = crate::db::group::get_all_group_members_for_group_name(gname)
-                .await
-                .unwrap_or_default();
-            if !target_user.is_empty() && !members.iter().any(|m| m == target_user) {
-                members.push(target_user.to_string());
-            }
-            shared_group_members = members;
-            if shared_group_members.is_empty() {
-                UserOrTokenFilter::UserList(vec![target_user])
-            } else {
-                let refs: Vec<&str> = shared_group_members.iter().map(|s| s.as_str()).collect();
-                UserOrTokenFilter::UserList(refs)
+            let user_list = rule.user.as_ref().map(|u| {
+                u.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty() && *s != "*")
+                    .collect::<Vec<&str>>()
+            });
+            UserOrTokenFilter::GroupShared {
+                group_name: gname.as_str(),
+                user_list,
             }
         } else {
-            UserOrTokenFilter::UserList(vec![target_user])
+            UserOrTokenFilter::GroupPerUser {
+                group_name: gname.as_str(),
+                user: target_user,
+            }
         }
     } else if !target_user.is_empty() && target_user != "*" {
         let items: Vec<&str> = target_user
@@ -662,15 +774,17 @@ pub async fn calculate_usage_for_rule(
         _ => "COALESCE(SUM(total_tokens), 0)",
     };
 
-    let used: i64 = query_request_scalar_i64(column_expr, &target_filter, &model_filter, start_time)
-        .await
-        .unwrap_or(0);
+    let used: i64 =
+        query_request_scalar_i64(column_expr, &target_filter, &model_filter, start_time)
+            .await
+            .unwrap_or(0);
 
     let remaining = (rule.limit_value - used).max(0);
 
     let (reset_in_seconds, reset_timestamp) = if let Some(dur) = duration {
         let oldest_in_window: Option<i64> =
-            query_request_scalar_i64("MIN(enqueue)", &target_filter, &model_filter, start_time).await;
+            query_request_scalar_i64("MIN(enqueue)", &target_filter, &model_filter, start_time)
+                .await;
 
         if let Some(oldest) = oldest_in_window {
             let reset_ts = oldest + dur;
