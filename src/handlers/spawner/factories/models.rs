@@ -160,6 +160,7 @@ impl Model for HttpModel {
             match generation_type {
                 GenerationType::Completions => "/v1/chat/completions",
                 GenerationType::Embeddings => "/v1/embeddings",
+                GenerationType::Responses => "/v1/responses",
             },
             request,
         )

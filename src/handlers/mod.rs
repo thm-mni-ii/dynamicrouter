@@ -35,6 +35,7 @@ pub fn try_get_handler() -> Option<&'static RoutingHandler> {
 pub enum GenerationType {
     Completions,
     Embeddings,
+    Responses,
 }
 
 #[async_trait::async_trait]

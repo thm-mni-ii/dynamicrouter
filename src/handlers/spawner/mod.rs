@@ -217,7 +217,12 @@ impl Handler for SpawnerHandler {
         }
 
         let result = match result {
-            Ok(response) => Ok(wrap_response_with_logging(response, request_id, prompt_tokens)),
+            Ok(response) => Ok(wrap_response_with_logging(
+                response,
+                request_id,
+                prompt_tokens,
+                generation_type,
+            )),
             Err(err) => Err(err),
         };
 

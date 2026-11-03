@@ -1,4 +1,5 @@
 use crate::db::request::save_response_body_and_tokens;
+use crate::handlers::GenerationType;
 use axum::body::Body;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -118,10 +119,113 @@ impl Drop for RequestGuard {
 pub struct ResponseLogger {
     pub id: String,
     pub prompt_tokens: i64,
+    pub generation_type: GenerationType,
     pub buffer: Arc<Mutex<Vec<u8>>>,
 }
 
-pub fn parse_tokens_from_response(text: &str, default_prompt_tokens: i64) -> (i64, i64, i64) {
+fn parse_responses_api_tokens(text: &str, default_prompt_tokens: i64) -> (i64, i64, i64) {
+    if let Ok(json_val) = serde_json::from_str::<Value>(text)
+        && let Some(usage) = json_val.get("usage")
+    {
+        let p = usage
+            .get("input_tokens")
+            .or_else(|| usage.get("prompt_tokens"))
+            .and_then(Value::as_i64)
+            .unwrap_or(default_prompt_tokens);
+        let c = usage
+            .get("output_tokens")
+            .or_else(|| usage.get("completion_tokens"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let t = usage
+            .get("total_tokens")
+            .and_then(Value::as_i64)
+            .unwrap_or(p + c);
+        return (p, c, t);
+    }
+
+    let mut sse_input_tokens = None;
+    let mut sse_output_tokens = None;
+    let mut sse_total_tokens = None;
+    let mut generated_text = String::new();
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(data_str) = trimmed.strip_prefix("data: ") {
+            if data_str == "[DONE]" {
+                continue;
+            }
+            if let Ok(chunk_json) = serde_json::from_str::<Value>(data_str) {
+                let usage_opt = chunk_json
+                    .get("response")
+                    .and_then(|r| r.get("usage"))
+                    .or_else(|| chunk_json.get("usage"));
+
+                if let Some(usage) = usage_opt {
+                    if let Some(p) = usage
+                        .get("input_tokens")
+                        .or_else(|| usage.get("prompt_tokens"))
+                        .and_then(Value::as_i64)
+                    {
+                        sse_input_tokens = Some(p);
+                    }
+                    if let Some(c) = usage
+                        .get("output_tokens")
+                        .or_else(|| usage.get("completion_tokens"))
+                        .and_then(Value::as_i64)
+                    {
+                        sse_output_tokens = Some(c);
+                    }
+                    if let Some(t) = usage.get("total_tokens").and_then(Value::as_i64) {
+                        sse_total_tokens = Some(t);
+                    }
+                }
+
+                if let Some(delta) = chunk_json.get("delta").and_then(Value::as_str) {
+                    generated_text.push_str(delta);
+                } else if let Some(text) = chunk_json
+                    .get("delta")
+                    .and_then(|d| d.get("text"))
+                    .and_then(Value::as_str)
+                {
+                    generated_text.push_str(text);
+                } else if let Some(text) = chunk_json.get("text").and_then(Value::as_str) {
+                    generated_text.push_str(text);
+                }
+            }
+        }
+    }
+
+    if let (Some(p), Some(c), Some(t)) = (sse_input_tokens, sse_output_tokens, sse_total_tokens) {
+        return (p, c, t);
+    }
+
+    let prompt_tokens = default_prompt_tokens.max(1);
+    let completion_tokens = if generated_text.is_empty() {
+        ((text.chars().count() as f64) / 4.0).ceil() as i64
+    } else {
+        ((generated_text.chars().count() as f64) / 3.8).ceil() as i64
+    };
+
+    (prompt_tokens, completion_tokens, prompt_tokens + completion_tokens)
+}
+
+fn parse_embeddings_api_tokens(text: &str, default_prompt_tokens: i64) -> (i64, i64, i64) {
+    if let Ok(json_val) = serde_json::from_str::<Value>(text)
+        && let Some(usage) = json_val.get("usage")
+    {
+        let p = usage
+            .get("prompt_tokens")
+            .and_then(Value::as_i64)
+            .unwrap_or(default_prompt_tokens);
+        let t = usage.get("total_tokens").and_then(Value::as_i64).unwrap_or(p);
+        return (p, 0, t);
+    }
+    let p = default_prompt_tokens.max(1);
+    (p, 0, p)
+}
+
+fn parse_completions_api_tokens(text: &str, default_prompt_tokens: i64) -> (i64, i64, i64) {
     // 1. Check if the response is valid JSON (non-streaming standard OpenAI response)
     if let Ok(json_val) = serde_json::from_str::<Value>(text)
         && let Some(usage) = json_val.get("usage")
@@ -187,10 +291,27 @@ pub fn parse_tokens_from_response(text: &str, default_prompt_tokens: i64) -> (i6
     (prompt_tokens, completion_tokens, prompt_tokens + completion_tokens)
 }
 
+pub fn parse_tokens_from_response(text: &str, default_prompt_tokens: i64) -> (i64, i64, i64) {
+    parse_tokens_from_response_for_type(text, default_prompt_tokens, GenerationType::Completions)
+}
+
+pub fn parse_tokens_from_response_for_type(
+    text: &str,
+    default_prompt_tokens: i64,
+    generation_type: GenerationType,
+) -> (i64, i64, i64) {
+    match generation_type {
+        GenerationType::Completions => parse_completions_api_tokens(text, default_prompt_tokens),
+        GenerationType::Responses => parse_responses_api_tokens(text, default_prompt_tokens),
+        GenerationType::Embeddings => parse_embeddings_api_tokens(text, default_prompt_tokens),
+    }
+}
+
 impl Drop for ResponseLogger {
     fn drop(&mut self) {
         let id = self.id.clone();
         let prompt_tokens = self.prompt_tokens;
+        let generation_type = self.generation_type;
         let buffer = self.buffer.clone();
         tokio::spawn(async move {
             let bytes = {
@@ -198,7 +319,7 @@ impl Drop for ResponseLogger {
                 lock.clone()
             };
             if let Ok(text) = String::from_utf8(bytes) {
-                let (p, c, t) = parse_tokens_from_response(&text, prompt_tokens);
+                let (p, c, t) = parse_tokens_from_response_for_type(&text, prompt_tokens, generation_type);
                 if let Err(e) = save_response_body_and_tokens(&id, &text, p, c, t).await {
                     error!("Failed to save response body & tokens for request {id}: {e}");
                 }
@@ -213,12 +334,14 @@ pub fn wrap_response_with_logging(
     mut response: ModelResponse,
     request_id: String,
     prompt_tokens: i64,
+    generation_type: GenerationType,
 ) -> ModelResponse {
     response.request_id = Some(request_id.clone());
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let logger = ResponseLogger {
         id: request_id,
         prompt_tokens,
+        generation_type,
         buffer: buffer.clone(),
     };
 

@@ -44,6 +44,7 @@ async fn async_main() {
 
     let app = Router::new()
         .route("/v1/chat/completions", post(routes::completions))
+        .route("/v1/responses", post(routes::responses))
         .route("/v1/embeddings", post(routes::embeddings))
         .route("/v1/models", get(routes::models))
         .nest("/auth", auth_routes())

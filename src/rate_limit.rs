@@ -11,29 +11,40 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub fn estimate_prompt_tokens(request: &Value) -> i64 {
+    let mut total_chars = 0;
+
+    if let Some(instructions) = request.get("instructions").and_then(Value::as_str) {
+        total_chars += instructions.chars().count() + 4;
+    }
+
     // 1. If messages array is present (standard ChatCompletion)
     if let Some(messages) = request.get("messages").and_then(Value::as_array) {
-        let mut char_count = 0;
         for msg in messages {
             if let Some(content) = msg.get("content").and_then(Value::as_str) {
-                char_count += content.chars().count();
+                total_chars += content.chars().count();
+            } else if let Some(parts) = msg.get("content").and_then(Value::as_array) {
+                for part in parts {
+                    if let Some(text) = part.get("text").and_then(Value::as_str) {
+                        total_chars += text.chars().count();
+                    }
+                }
             }
             if let Some(role) = msg.get("role").and_then(Value::as_str) {
-                char_count += role.chars().count() + 4;
+                total_chars += role.chars().count() + 4;
             }
         }
-        let estimated = ((char_count as f64) / 3.8).ceil() as i64 + 4;
+        let estimated = ((total_chars as f64) / 3.8).ceil() as i64 + 4;
         return estimated.max(1);
     }
 
     // 2. If prompt string / array is present (standard Completion)
     if let Some(prompt) = request.get("prompt") {
         if let Some(s) = prompt.as_str() {
-            let estimated = ((s.chars().count() as f64) / 3.8).ceil() as i64;
+            total_chars += s.chars().count();
+            let estimated = ((total_chars as f64) / 3.8).ceil() as i64;
             return estimated.max(1);
         }
         if let Some(arr) = prompt.as_array() {
-            let mut total_chars = 0;
             for p in arr {
                 if let Some(s) = p.as_str() {
                     total_chars += s.chars().count();
@@ -44,22 +55,39 @@ pub fn estimate_prompt_tokens(request: &Value) -> i64 {
         }
     }
 
-    // 3. If input is present (standard Embeddings)
+    // 3. If input is present (standard Embeddings or Responses API)
     if let Some(input) = request.get("input") {
         if let Some(s) = input.as_str() {
-            let estimated = ((s.chars().count() as f64) / 3.8).ceil() as i64;
-            return estimated.max(1);
-        }
-        if let Some(arr) = input.as_array() {
-            let mut total_chars = 0;
+            total_chars += s.chars().count();
+        } else if let Some(arr) = input.as_array() {
             for item in arr {
                 if let Some(s) = item.as_str() {
                     total_chars += s.chars().count();
+                } else if let Some(obj) = item.as_object() {
+                    if let Some(content) = obj.get("content").and_then(Value::as_str) {
+                        total_chars += content.chars().count();
+                    } else if let Some(parts) = obj.get("content").and_then(Value::as_array) {
+                        for part in parts {
+                            if let Some(text) = part.get("text").and_then(Value::as_str) {
+                                total_chars += text.chars().count();
+                            }
+                        }
+                    }
+                    if let Some(role) = obj.get("role").and_then(Value::as_str) {
+                        total_chars += role.chars().count() + 4;
+                    }
                 }
             }
+        }
+        if total_chars > 0 {
             let estimated = ((total_chars as f64) / 3.8).ceil() as i64;
             return estimated.max(1);
         }
+    }
+
+    if total_chars > 0 {
+        let estimated = ((total_chars as f64) / 3.8).ceil() as i64;
+        return estimated.max(1);
     }
 
     1

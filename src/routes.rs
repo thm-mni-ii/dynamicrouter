@@ -24,6 +24,10 @@ pub async fn embeddings(authorization: Authorization, body: Json<Value>) -> Resp
     generate(GenerationType::Embeddings, authorization, body).await
 }
 
+pub async fn responses(authorization: Authorization, body: Json<Value>) -> Response {
+    generate(GenerationType::Responses, authorization, body).await
+}
+
 pub async fn models(authorization: Authorization) -> Result<Json<Value>, StatusCode> {
     let mut seen_models = std::collections::HashSet::new();
     let mut models = Vec::new();

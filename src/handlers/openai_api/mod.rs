@@ -209,6 +209,7 @@ impl Handler for OpenaiHandler {
         let endpoint_path = match generation_type {
             GenerationType::Completions => "chat/completions",
             GenerationType::Embeddings => "embeddings",
+            GenerationType::Responses => "responses",
         };
 
         let target_url = api_conf.endpoint_url(endpoint_path)?;
@@ -218,7 +219,8 @@ impl Handler for OpenaiHandler {
         if let Some(obj) = request_body.as_object_mut() {
             obj.insert("model".to_string(), json!(target_model));
             // Ensure stream_options.include_usage = true for streaming chat completions
-            if obj.get("stream").and_then(Value::as_bool).unwrap_or(false)
+            if generation_type == GenerationType::Completions
+                && obj.get("stream").and_then(Value::as_bool).unwrap_or(false)
                 && !obj.contains_key("stream_options")
             {
                 obj.insert("stream_options".to_string(), json!({ "include_usage": true }));
@@ -280,7 +282,12 @@ impl Handler for OpenaiHandler {
                     body: Box::new(StreamAdapter::new(res.bytes_stream())),
                 };
 
-                Ok(wrap_response_with_logging(model_response, request_id, prompt_tokens))
+                Ok(wrap_response_with_logging(
+                    model_response,
+                    request_id,
+                    prompt_tokens,
+                    generation_type,
+                ))
             }
             Err(err) => {
                 request_failed(&request_id).await?;
