@@ -104,6 +104,7 @@
 
               contents = [
                 dynamicrouterPackage
+                pkgs.dockerTools.caCertificates
               ]
               ++ sharedNativeDeps pkgs;
 
@@ -116,6 +117,7 @@
                 };
                 Env = [
                   "RUST_LOG=info"
+                  "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
                 ];
               };
             }
