@@ -56,7 +56,7 @@ pub struct Request {
     pub enqueue: i64,
     pub done: Option<i64>,
     pub status: RequestStatus,
-    pub instance: String,
+    pub instance: Option<String>,
     pub user: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_body: Option<String>,
@@ -399,7 +399,7 @@ pub async fn get_requests(filter: &RequestFilter) -> Result<PaginatedRequests, a
                 done: r.done,
                 status: Some(r.status),
                 user: r.user,
-                instance: Some(r.instance),
+                instance: r.instance,
                 request_body,
                 response_body,
             }

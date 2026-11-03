@@ -122,6 +122,9 @@ impl SpawnerHandler {
             }
             let instances = get_instances_for(&item.model).await?;
             for instance in instances {
+                if instance.id.starts_with("openai:") {
+                    continue;
+                }
                 info!(
                     "Cleaning instance {} for {}",
                     instance.id,
