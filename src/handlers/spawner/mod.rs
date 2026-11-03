@@ -12,7 +12,7 @@ use crate::handlers::spawner::factories::{DynModelFactory, ModelFactory};
 use crate::handlers::{DynHandler, GenerationType, Handler};
 use crate::utils::ModelRef;
 use crate::utils::response::{ModelResponse, RequestGuard, wrap_response_with_logging};
-use k8s_openapi::chrono::Utc;
+use chrono::Utc;
 use log::{error, info};
 use rand::seq::IndexedRandom;
 use serde_json::Value;

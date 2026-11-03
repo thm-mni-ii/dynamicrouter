@@ -3,7 +3,7 @@ use crate::db::rate_limit::{
     CreateRateLimitPayload, RateLimitRule, create_rate_limit, delete_rate_limits_for_token,
     delete_rate_limits_for_user, get_rate_limits_for_token,
 };
-use rand::RngCore;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::collections::HashSet;

@@ -357,7 +357,7 @@ pub async fn get_requests(filter: &RequestFilter) -> Result<PaginatedRequests, a
     };
 
     count_query.push_str(&where_str);
-    let total: i64 = sqlx::query_scalar(&count_query)
+    let total: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(count_query))
         .fetch_one(get_executor())
         .await?;
 
@@ -371,7 +371,7 @@ pub async fn get_requests(filter: &RequestFilter) -> Result<PaginatedRequests, a
         "SELECT {select_columns} FROM request{where_str} ORDER BY enqueue DESC LIMIT {page_size} OFFSET {offset}"
     );
 
-    let items = sqlx::query_as::<_, Request>(&data_query)
+    let items = sqlx::query_as::<_, Request>(sqlx::AssertSqlSafe(data_query))
         .fetch_all(get_executor())
         .await?;
 
@@ -699,7 +699,7 @@ pub async fn get_timeseries_metrics(
         "
     );
 
-    let rows = sqlx::query_as::<_, TimeseriesRow>(&query)
+    let rows = sqlx::query_as::<_, TimeseriesRow>(sqlx::AssertSqlSafe(query))
         .fetch_all(get_executor())
         .await?;
 

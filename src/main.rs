@@ -103,7 +103,7 @@ async fn async_main() {
     }
 }
 
-async fn shutdown_signal(handle: axum_server::Handle) {
+async fn shutdown_signal(handle: axum_server::Handle<std::net::SocketAddr>) {
     let ctrl_c = async {
         signal::ctrl_c()
             .await

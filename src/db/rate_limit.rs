@@ -679,7 +679,7 @@ async fn query_request_scalar_i64(
         where_parts.join(" AND ")
     );
 
-    let mut query = sqlx::query_scalar::<_, i64>(&q_str);
+    let mut query = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(q_str));
     for s in string_binds {
         query = query.bind(s);
     }
