@@ -1,4 +1,6 @@
 -- Decouple request audit/ledger from ephemeral instance deletion (ON DELETE SET NULL)
+PRAGMA defer_foreign_keys = ON;
+
 CREATE TABLE IF NOT EXISTS request_new (
     id TEXT PRIMARY KEY NOT NULL,
     model TEXT NOT NULL,
@@ -17,7 +19,20 @@ CREATE TABLE IF NOT EXISTS request_new (
 );
 
 INSERT INTO request_new (id, model, enqueue, done, instance, user, request_body, response_body, prompt_tokens, completion_tokens, total_tokens, token_hash, status)
-SELECT id, model, enqueue, done, instance, user, request_body, response_body, prompt_tokens, completion_tokens, total_tokens, token_hash, status
+SELECT 
+    id, 
+    model, 
+    enqueue, 
+    done, 
+    CASE WHEN instance IN (SELECT id FROM instance) THEN instance ELSE NULL END,
+    user, 
+    request_body, 
+    response_body, 
+    prompt_tokens, 
+    completion_tokens, 
+    total_tokens, 
+    token_hash, 
+    status
 FROM request;
 
 DROP TABLE request;
@@ -36,3 +51,5 @@ CREATE INDEX IF NOT EXISTS idx_request_token_model_enqueue
 CREATE INDEX IF NOT EXISTS idx_request_status_enqueue ON request (status, enqueue DESC);
 CREATE INDEX IF NOT EXISTS idx_request_model_status_enqueue ON request (model, status, enqueue DESC);
 CREATE INDEX IF NOT EXISTS idx_request_user_status_enqueue ON request (user, status, enqueue DESC);
+
+PRAGMA defer_foreign_keys = OFF;
